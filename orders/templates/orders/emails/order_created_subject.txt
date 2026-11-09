@@ -1,0 +1,2 @@
+{# One line: emails.py strips the newline at the end of the file #}
+{% autoescape off %}Bookstore: {{ order }} is created ({{ order.total }} UAH){% endautoescape %}

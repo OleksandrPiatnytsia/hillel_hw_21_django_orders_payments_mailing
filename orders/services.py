@@ -5,11 +5,14 @@ the "Cancel" button, the admin (stage 8) and the cancel_unpaid_orders
 command, and the rules (locks, stock) must be the same everywhere.
 """
 
+from functools import partial
+
 from django.db import transaction
 from django.db.models import F
 
 from books.models import Book
 
+from .emails import send_order_created_email
 from .models import Order, OrderItem
 
 
@@ -116,8 +119,13 @@ def create_order(user, quantities, *, full_name, phone, address):
         order.total = total
         order.save(update_fields=["total", "updated_at"])
 
-        # Stage 4: transaction.on_commit(<send the "order created" email>)
-        # — the email must go only after COMMIT, never for a rolled-back order.
+        # The email is sent only AFTER COMMIT. Sent right here, inside the
+        # transaction, it could promise an order that is then rolled back
+        # (an error later in this block, a failed COMMIT). on_commit() keeps
+        # the function and calls it when the outermost atomic() commits;
+        # after a rollback it is simply dropped.
+        # partial(f, order.pk): a function with the id already bound to it
+        transaction.on_commit(partial(send_order_created_email, order.pk))
 
     return order
 

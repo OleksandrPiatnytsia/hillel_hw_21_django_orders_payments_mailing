@@ -1,0 +1,20 @@
+{% autoescape off %}{# Plain text: no HTML escaping, "&" stays "&" #}
+Hello{% if order.full_name %}, {{ order.full_name }}{% endif %}!
+
+Thank you for your order. {{ order }} is created, the books are reserved for you.
+
+{% for item in order.items.all %}- {{ item.title }}: {{ item.quantity }} x {{ item.price }} = {{ item.cost }} UAH
+{% endfor %}
+Total: {{ order.total }} UAH
+
+Delivery:
+{{ order.full_name }}
+{{ order.phone }}
+{{ order.address }}
+
+Payment status: {{ order.get_payment_status_display }}.
+Order page: {{ order_url }}
+
+Bookstore
+{{ site_url }}
+{% endautoescape %}

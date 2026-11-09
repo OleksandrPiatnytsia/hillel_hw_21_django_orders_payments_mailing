@@ -258,11 +258,54 @@ MEDIA_ROOT = BASE_DIR / "media"
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    "default": {
-        "BACKEND": "django.core.mail.backends.console.EmailBackend",
-    },
-}
+#
+# Django 6.1: MAILERS replaces the old EMAIL_BACKEND / EMAIL_HOST / ...
+# settings (deprecated, removed in Django 7.0). The "default" mailer is used
+# by send_mail() and EmailMessage.send(). Tests don't send real emails: the
+# test runner replaces every mailer with the locmem backend (mail.outbox).
+#
+# Gmail SMTP: login = the Gmail address, password = an App Password
+# (16 letters, Google account -> Security -> 2-Step Verification ->
+# App passwords), NOT the account password. Limit ~500 emails per day.
+# Without these two variables emails are printed to the console (the
+# terminal of runserver / `docker compose logs web`) — handy without Gmail.
+EMAIL_USER = os.getenv("EMAIL_HOST_USER", "")
+# Google shows the password in groups "abcd efgh ijkl mnop"; spaces out
+EMAIL_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "").replace(" ", "")
+
+if EMAIL_USER and EMAIL_PASSWORD:
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+            "OPTIONS": {
+                "host": "smtp.gmail.com",
+                # 587 + use_tls: connect in plain text, then STARTTLS
+                # upgrades the connection to TLS before the login
+                "port": 587,
+                "use_tls": True,
+                "username": EMAIL_USER,
+                "password": EMAIL_PASSWORD,
+                # Seconds; without it a stuck connection would hang the
+                # request that sends the email forever
+                "timeout": 10,
+            },
+        },
+    }
+else:
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.console.EmailBackend",
+        },
+    }
+
+# "From" of the emails. Gmail sends only from the account it logs in with
+# (another address is replaced by it), so it's the same address with a name.
+DEFAULT_FROM_EMAIL = f"Bookstore <{EMAIL_USER or 'noreply@localhost'}>"
+
+# Address of the site for links in emails. An email is sent without a
+# request (after COMMIT, from the Stripe webhook), so request.build_absolute_uri()
+# is not available there.
+SITE_URL = os.getenv("SITE_URL", "http://localhost:8000").rstrip("/")
 
 
 # Logging
@@ -331,6 +374,17 @@ LOGGING = {
             "propagate": False,
         },
         "users": {
+            "handlers": ["console", "file"],
+            "level": APP_LOG_LEVEL,
+            "propagate": False,
+        },
+        # orders.emails: "email sent" / "email failed" with the traceback
+        "orders": {
+            "handlers": ["console", "file"],
+            "level": APP_LOG_LEVEL,
+            "propagate": False,
+        },
+        "payments": {
             "handlers": ["console", "file"],
             "level": APP_LOG_LEVEL,
             "propagate": False,

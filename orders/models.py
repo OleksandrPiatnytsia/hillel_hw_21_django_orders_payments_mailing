@@ -99,6 +99,68 @@ class Order(models.Model):
             and self.payment_status == self.PaymentStatus.UNPAID
         )
 
+    # ------------------------------------------------------------------
+    # Payments (payments.Payment, related_name="payments")
+    # ------------------------------------------------------------------
+
+    @property
+    def paid_amount(self):
+        """Sum of the succeeded payments, in UAH. One SQL query (SUM)."""
+        # Imported here: payments.models points to orders by the string
+        # "orders.Order", orders.models doesn't import payments at the top,
+        # so the two apps don't import each other at load time
+        from payments.models import Payment
+
+        result = self.payments.filter(status=Payment.Status.SUCCEEDED).aggregate(
+            total=models.Sum("amount")
+        )
+        # SUM over no rows is NULL in SQL -> None in Python
+        return result["total"] or Decimal("0.00")
+
+    @property
+    def amount_due(self):
+        """How much is still to pay: total - paid, never below 0."""
+        return max(self.total - self.paid_amount, Decimal("0.00"))
+
+    @property
+    def paid_percent(self):
+        """0..100, whole percent; for display only, not stored.
+
+        Calculated from the stored total and the payments every time, so it
+        can't get out of sync with them (a stored percent could).
+        """
+        if self.total <= 0:
+            return 100
+        return min(int(self.paid_amount * 100 / self.total), 100)
+
+    def refresh_payment_status(self):
+        """Recalculate payment_status from the succeeded payments and save it.
+
+        The ONLY place that changes payment_status:
+            0             -> unpaid
+            < total       -> partially_paid
+            >= total      -> paid
+        Called by payments.services after every payment change. The caller
+        must hold the lock on this order (select_for_update) inside a
+        transaction, so two payments finishing at the same moment can't
+        both read the old sum and overwrite each other's result.
+
+        Returns True if the status changed.
+        """
+        paid = self.paid_amount
+        if paid <= 0:
+            new_status = self.PaymentStatus.UNPAID
+        elif paid < self.total:
+            new_status = self.PaymentStatus.PARTIALLY_PAID
+        else:
+            new_status = self.PaymentStatus.PAID
+
+        if new_status == self.payment_status:
+            return False
+        self.payment_status = new_status
+        self.save(update_fields=["payment_status", "updated_at"])
+        return True
+
 
 class OrderItem(models.Model):
     """One line of an order: which book, at what price, how many."""

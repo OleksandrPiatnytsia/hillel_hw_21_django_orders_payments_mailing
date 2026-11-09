@@ -8,6 +8,7 @@ from django.views.generic import ListView
 
 from books.views import ElidedPaginationMixin
 from cart.cart import Cart
+from payments.services import PaymentError, start_online_payment
 
 from .forms import CheckoutForm
 from .models import Order
@@ -50,7 +51,14 @@ def checkout(request):
                 request,
                 f"{order} is created. The books are reserved for you.",
             )
-            return redirect(order)  # Order.get_absolute_url()
+            # Straight to the payment page. If the provider is not available,
+            # the order is still created: the order page with the error and
+            # the "Pay" button for a later attempt.
+            try:
+                return redirect(start_online_payment(order.pk, request.user, request))
+            except PaymentError as error:
+                messages.error(request, str(error))
+                return redirect(order)  # Order.get_absolute_url()
     else:
         form = CheckoutForm(initial={"full_name": request.user.get_full_name()})
 

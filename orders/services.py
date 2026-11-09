@@ -166,4 +166,13 @@ def cancel_order(order_id, *, user=None):
         order.status = Order.Status.CANCELLED
         order.save(update_fields=["status", "updated_at"])
 
+        # An open Stripe page of this order could still be paid after the
+        # cancellation: close it. After COMMIT: a request to Stripe is slow
+        # and must not run while the order is locked.
+        # Imported here: payments.services imports orders.models, a
+        # module-level import both ways would be a circular import.
+        from payments.services import close_open_payments
+
+        transaction.on_commit(partial(close_open_payments, order.pk))
+
     return order

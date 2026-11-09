@@ -11,6 +11,7 @@ Every function here:
 """
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -19,6 +20,8 @@ from django.utils import timezone
 from orders.models import Order
 
 from .models import Payment
+from .providers.base import PaymentProviderError
+from .providers.registry import ONLINE_PROVIDER, get_provider
 
 logger = logging.getLogger(__name__)  # "payments.services"
 
@@ -140,3 +143,134 @@ def mark_payment_unsuccessful(payment_id, status, *, details=None):
 
     logger.info("Payment %s for %s is %s", payment.pk, order, status)
     return payment
+
+
+# ---------------------------------------------------------------------------
+# Online payment (Stripe Checkout)
+# ---------------------------------------------------------------------------
+
+# A payment page that expires sooner than this is not offered again:
+# the customer needs time to type the card details
+MIN_TIME_LEFT_ON_PAGE = timedelta(minutes=5)
+
+
+def start_online_payment(order_id, user, request):
+    """The "Pay" button: return the URL of the provider's payment page.
+
+    1. In a transaction, with the order locked:
+       - checks: own order, not cancelled, something left to pay;
+       - an open page of an earlier attempt for the same amount -> reuse it
+         (two clicks on "Pay", or "back" from Stripe and "Pay" again,
+         must not create two pages that could both be paid);
+       - otherwise a new Payment(pending) for the amount still due.
+    2. AFTER the transaction: the request to the provider. A network call
+       inside the transaction would keep the order locked for seconds
+       (everyone else waits), and a rollback can't undo it anyway.
+       If the provider fails, the Payment becomes "failed" (kept for history).
+    Raises PaymentError with a text for the customer.
+    """
+    provider = get_provider(ONLINE_PROVIDER)
+    outdated = []  # open pages of earlier attempts that can't be reused
+
+    with transaction.atomic():
+        order = _lock_order(order_id)
+        if order.user_id != user.pk:
+            raise PaymentError("Order not found.")
+        if order.status == Order.Status.CANCELLED:
+            raise PaymentError(f"{order} is cancelled.")
+        due = order.amount_due
+        if due <= 0:
+            raise PaymentError(f"{order} is already paid.")
+
+        now = timezone.now()
+        for payment in order.payments.filter(
+            provider=provider.name, status=Payment.Status.PENDING
+        ):
+            url = payment.details.get("url")
+            expires_at = payment.details.get("expires_at", 0)
+            if not url:
+                # Created a moment ago by another click, the request to the
+                # provider is still running: no second page
+                if payment.created_at > now - timedelta(minutes=1):
+                    raise PaymentError("The payment is being prepared, please try again in a minute.")
+                continue
+            if payment.amount == due and expires_at > (now + MIN_TIME_LEFT_ON_PAGE).timestamp():
+                logger.info("Payment %s: reusing the open payment page", payment.pk)
+                return url
+            outdated.append(payment)
+
+        payment = Payment.objects.create(
+            order=order,
+            provider=provider.name,
+            amount=due,
+            status=Payment.Status.PENDING,
+        )
+
+    for old in outdated:
+        close_payment_page(old)
+
+    try:
+        session = provider.start(payment, request)
+    except PaymentProviderError as error:
+        mark_payment_unsuccessful(
+            payment.pk, Payment.Status.FAILED, details={"error": str(error)}
+        )
+        raise PaymentError(str(error)) from error
+
+    payment.external_id = session.external_id
+    payment.details = {**payment.details, "url": session.url, "expires_at": session.expires_at}
+    payment.save(update_fields=["external_id", "details", "updated_at"])
+    logger.info("Payment %s for %s: payment page created (%s)", payment.pk, order, session.external_id)
+    return session.url
+
+
+def sync_payment(payment):
+    """Ask the provider about a pending payment and save the answer.
+
+    Used when the customer comes back from the payment page: it shows the
+    result at once, without waiting for the webhook (stage 7), and works
+    even if the webhook is not set up. Both paths end in the same
+    idempotent functions, so whichever comes first wins and the second
+    changes nothing.
+    Returns the fresh Payment.
+    """
+    if payment.status != Payment.Status.PENDING or not payment.external_id:
+        return payment
+    try:
+        status = get_provider(payment.provider).fetch_status(payment)
+    except PaymentProviderError:
+        return payment  # can't tell now: stays pending, the webhook decides
+    if status == Payment.Status.SUCCEEDED:
+        return mark_payment_succeeded(payment.pk)
+    if status in (Payment.Status.EXPIRED, Payment.Status.FAILED):
+        return mark_payment_unsuccessful(payment.pk, status)
+    return payment
+
+
+def close_payment_page(payment):
+    """Expire the provider's page of a pending payment; it becomes "expired".
+
+    If the provider says it's too late (already paid), the payment stays
+    pending: the money is real, sync_payment() / the webhook records it.
+    Best effort: a provider error is logged, nothing is raised.
+    """
+    try:
+        closed = get_provider(payment.provider).cancel(payment)
+    except PaymentProviderError:
+        logger.warning("Payment %s: can't close the payment page", payment.pk)
+        return
+    if closed:
+        mark_payment_unsuccessful(payment.pk, Payment.Status.EXPIRED, details={"closed_by": "site"})
+    else:
+        sync_payment(payment)
+
+
+def close_open_payments(order_id):
+    """After an order is cancelled: no open payment page may stay payable.
+
+    Called by orders.services.cancel_order() with transaction.on_commit().
+    """
+    for payment in Payment.objects.filter(
+        order_id=order_id, status=Payment.Status.PENDING
+    ).exclude(external_id=""):
+        close_payment_page(payment)

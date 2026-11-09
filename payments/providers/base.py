@@ -1,5 +1,17 @@
+from dataclasses import dataclass
+
+
 class PaymentProviderError(Exception):
     """The provider can't do the operation; the text can be shown to the user."""
+
+
+@dataclass
+class ProviderSession:
+    """What start() returns: the provider's id of the payment and where to pay."""
+
+    external_id: str  # saved to Payment.external_id (Stripe: "cs_test_...")
+    url: str  # the provider's payment page; the customer is redirected there
+    expires_at: int  # Unix time; after it the page doesn't accept payment
 
 
 class PaymentProvider:
@@ -10,13 +22,16 @@ class PaymentProvider:
     in registry.py; the checkout, the "Pay" button and the webhook URL stay
     the same.
 
-    The flow of an online provider (Stripe, stage 6-7):
+    The flow of an online provider (Stripe):
         1. "Pay" -> payments.services creates Payment(status=pending)
-        2. start(payment, request) -> URL of the provider's payment page,
-           the customer is redirected there and pays
-        3. the provider calls /payments/webhook/<name>/ ->
-           handle_webhook(request) -> payments.services marks the Payment
-           succeeded / failed / expired -> Order.refresh_payment_status()
+        2. start(payment, request) -> ProviderSession; the customer is
+           redirected to session.url and pays there
+        3. the provider tells us the result:
+           - the customer comes back -> fetch_status(payment)
+           - the provider calls /payments/webhook/<name>/ (stage 7) ->
+             handle_webhook(request)
+           -> payments.services marks the Payment succeeded / expired
+           -> Order.refresh_payment_status()
     """
 
     # Same value as Payment.Provider ("stripe", "manual"): the registry key,
@@ -27,13 +42,27 @@ class PaymentProvider:
     customer_facing = False
 
     def start(self, payment, request):
-        """Begin paying `payment` at the provider; return the URL to redirect to.
+        """Begin paying `payment` at the provider; return a ProviderSession.
 
-        May save provider data on the payment (external_id = the provider's
-        id of this payment). Raises PaymentProviderError if the provider
-        refuses or is unreachable.
+        Raises PaymentProviderError if the provider refuses or is unreachable.
         """
         raise PaymentProviderError(f"{self.name}: online payment is not supported.")
+
+    def fetch_status(self, payment):
+        """Ask the provider about the payment; return a Payment.Status value.
+
+        "succeeded" / "expired" / "failed", or "pending" while it's not decided.
+        Raises PaymentProviderError if the provider is unreachable.
+        """
+        return payment.status
+
+    def cancel(self, payment):
+        """Close the payment page so it can't be paid any more.
+
+        Returns True if it was closed, False if it's too late (already paid).
+        Default: nothing to close.
+        """
+        return True
 
     def handle_webhook(self, request):
         """Process a notification from the provider; return an HttpResponse.

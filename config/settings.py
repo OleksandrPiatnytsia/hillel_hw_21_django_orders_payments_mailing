@@ -302,6 +302,11 @@ else:
 # (another address is replaced by it), so it's the same address with a name.
 DEFAULT_FROM_EMAIL = f"Bookstore <{EMAIL_USER or 'noreply@localhost'}>"
 
+# Stripe (payments/providers/stripe_checkout.py). Test mode keys start with
+# sk_test_: no real money, test cards like 4242 4242 4242 4242.
+# Empty -> the "Pay" button answers "Online payment is not configured".
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+
 # Address of the site for links in emails. An email is sent without a
 # request (after COMMIT, from the Stripe webhook), so request.build_absolute_uri()
 # is not available there.

@@ -15,6 +15,8 @@ urlpatterns = [
     path("cart/", include("cart.urls")),
     # Checkout and the user's orders: /orders/checkout/, /orders/<pk>/, ...
     path("orders/", include("orders.urls")),
+    # "Pay" button and Stripe's return pages: /payments/pay/<order_id>/, ...
+    path("payments/", include("payments.urls")),
     # Bookstore catalog lives at the site root; namespace "books" comes
     # from app_name in books/urls.py
     path("", include("books.urls")),

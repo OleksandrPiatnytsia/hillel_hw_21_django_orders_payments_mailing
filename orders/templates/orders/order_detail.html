@@ -79,6 +79,18 @@
           </div>
         {% endif %}
       </div>
+      {% if order.status != "cancelled" and order.payment_status != "paid" %}
+        {# amount_due: total minus succeeded payments (partial manual ones too) #}
+        {% with due=order.amount_due %}
+          <div class="card-footer">
+            <form method="post" action="{% url 'payments:pay' order.pk %}">
+              {% csrf_token %}
+              <button class="btn btn-success w-100" type="submit">Pay {{ due }} ₴</button>
+            </form>
+            <div class="form-text text-center">Card payment on the Stripe page</div>
+          </div>
+        {% endwith %}
+      {% endif %}
       {% if order.can_be_cancelled_by_customer %}
         <div class="card-footer">
           <form method="post" action="{% url 'orders:cancel' order.pk %}"

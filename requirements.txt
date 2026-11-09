@@ -6,4 +6,5 @@ psycopg[binary]==3.3.8
 python-dotenv==1.2.4
 redis==8.1.0
 sqlparse==0.6.1
+stripe==16.1.0
 whitenoise==6.12.0

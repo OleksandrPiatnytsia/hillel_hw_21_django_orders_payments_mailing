@@ -1,14 +1,13 @@
-# hillel_hw_18 — Django: книгарня в Docker (PostgreSQL, Redis)
+# hillel_hw_21 — Django: замовлення, оплата й email-розсилка
 
-Навчальний Django-проєкт (Hillel). Продовження ДЗ №16 (автентифікація, права
-доступу, логування). У цьому ДЗ:
+Навчальний Django-проєкт (Hillel). Продовження ДЗ №18 (книгарня в Docker). У цьому ДЗ:
 
-- **docker-compose**: сервіси `web` (Django + gunicorn), `db` (PostgreSQL 17), `redis` (Redis 8);
-- **volumes** для бази, статики й обкладинок; **healthchecks** для всіх трьох сервісів;
-- **`docker-entrypoint.sh`**: міграції й `collectstatic` автоматично при кожному старті;
-- **перенесення даних** з SQLite у PostgreSQL (`dumpdata` / `loaddata` з природними ключами);
-- **налаштування з `.env`**: PostgreSQL, Redis (кеш і сесії), WhiteNoise для статики;
-- `/health/`: перевірка PostgreSQL і Redis (200 / 503).
+- **моделі `Order` і `OrderItem`**, створення замовлення в `transaction.atomic`;
+- **кошик у сесії** (`cart.py`: додати, видалити, очистити);
+- **оплата через Stripe Checkout Session**;
+- **email** після створення замовлення;
+- **адмінка**: `OrderItem` як inline в `Order`;
+- **спільні volume** бази й обкладинок для всіх наступних ДЗ (без перенесення даних).
 
 ## Стек
 

@@ -4,7 +4,8 @@
 #   docker compose ps              state and health of the services
 #   docker compose logs -f web     follow the Django / gunicorn output
 #   docker compose down            stop and remove the containers (volumes stay)
-#   docker compose down -v         ... and DELETE the volumes (database too!)
+#   docker compose down -v         ... and delete static_data (the shared
+#                                  database and covers stay: external)
 #
 # Variables like ${POSTGRES_DB} below are taken by docker compose from the
 # .env file next to this file (the same .env Django reads).
@@ -122,9 +123,26 @@ services:
       redis:
         condition: service_healthy
 
-# Named volumes: Docker keeps them in its own storage. `docker volume ls`
-# shows them with the project prefix (hillel_hw_18_..._postgres_data).
+# Named volumes: Docker keeps them in its own storage.
+#
+# postgres_data and media_data are SHARED between the homework projects
+# (hw_21, hw_22, ...): the same database and covers, no data transfer for
+# every new homework.
+#   name:     the real volume name, used as is. Without it compose adds the
+#             project prefix (the folder name: hillel_hw_21_..._postgres_data),
+#             so every new folder would get new empty volumes.
+#   external: compose does not create or delete these volumes, it only uses
+#             them: `docker compose down -v` can't wipe the shared database.
+#             If a volume is missing, `up` stops with "external volume not
+#             found". Create them once (a new machine, a fresh start):
+#               docker volume create hillel_bookstore_postgres_data && docker volume create hillel_bookstore_media_data
+#
+# static_data stays per project: collectstatic fills it on every start.
 volumes:
   postgres_data:
+    name: hillel_bookstore_postgres_data
+    external: true
   static_data:
   media_data:
+    name: hillel_bookstore_media_data
+    external: true

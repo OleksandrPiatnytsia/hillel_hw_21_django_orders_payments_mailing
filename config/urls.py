@@ -11,6 +11,8 @@ urlpatterns = [
     path("health/", health, name="health"),
     # Login / logout / sign up: /accounts/login/, ... (namespace "users")
     path("accounts/", include("users.urls")),
+    # Session cart: /cart/, /cart/add/<book_id>/, ... (namespace "cart")
+    path("cart/", include("cart.urls")),
     # Bookstore catalog lives at the site root; namespace "books" comes
     # from app_name in books/urls.py
     path("", include("books.urls")),

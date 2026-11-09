@@ -48,6 +48,18 @@
       </form>
 
       <ul class="navbar-nav">
+        {# Visible for guests too: the cart lives in the session #}
+        <li class="nav-item me-lg-2">
+          <a class="nav-link {% if current == 'detail' and request.resolver_match.namespace == 'cart' %}active{% endif %}"
+             href="{% url 'cart:detail' %}">
+            🛒 Cart
+            {# "cart" from the context processor; |length -> Cart.__len__: #}
+            {# copies in the session, no SQL query #}
+            {% with count=cart|length %}
+              {% if count %}<span class="badge rounded-pill text-bg-primary">{{ count }}</span>{% endif %}
+            {% endwith %}
+          </a>
+        </li>
         {% if user.is_authenticated %}
           <li class="nav-item dropdown">
             <a class="nav-link dropdown-toggle" href="#" role="button"

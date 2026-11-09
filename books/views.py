@@ -12,6 +12,8 @@ from django.views.generic import (
     UpdateView,
 )
 
+from cart.cart import Cart
+
 from .forms import BookFilterForm, BookForm
 from .models import Author, Book
 
@@ -97,6 +99,13 @@ class BookDetailView(DetailView):
             .select_related("author")
             .prefetch_related("categories")
         )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # "In your cart: 2" under the button. Templates can't call a method
+        # with an argument (cart.quantity_of(book)), so it's computed here.
+        context["in_cart"] = Cart(self.request).quantity_of(self.object)
+        return context
 
 
 class BookFormUserMixin:

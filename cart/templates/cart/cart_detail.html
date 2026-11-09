@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Cart{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">Cart</h1>
+
+{# "cart" comes from the context processor (cart/context_processors.py) #}
+{% if cart %}
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead>
+          <tr>
+            <th scope="col" colspan="2">Book</th>
+            <th scope="col" class="text-end">Price</th>
+            <th scope="col">Quantity</th>
+            <th scope="col" class="text-end">Cost</th>
+            <th scope="col"><span class="visually-hidden">Remove</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {# One SQL query for all items: Cart._get_items() uses in_bulk #}
+          {% for item in cart %}
+            {% with book=item.book %}
+              <tr>
+                <td style="width: 6rem">
+                  <img class="book-cover book-cover--thumb" src="{{ book.cover_url }}" alt="">
+                </td>
+                <td>
+                  <a class="text-decoration-none" href="{{ book.get_absolute_url }}">{{ book.title }}</a>
+                  <div class="small text-body-secondary">{{ book.author.name }}</div>
+                  {% if item.exceeds_stock %}
+                    {# Stock dropped after the book was added (someone else bought it) #}
+                    <div class="small text-danger">
+                      {% if book.stock %}Only {{ book.stock }} left in stock{% else %}Out of stock now{% endif %}
+                    </div>
+                  {% endif %}
+                </td>
+                <td class="text-end text-nowrap">{{ item.price }} ₴</td>
+                <td>
+                  {# override=1: set exactly this quantity, not add to it #}
+                  <form class="d-flex gap-2" method="post" action="{% url 'cart:add' book.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="override" value="1">
+                    {# max is a hint for the browser; Cart.add() limits by stock itself #}
+                    <input class="form-control form-control-sm" style="width: 5rem"
+                           type="number" name="quantity" value="{{ item.quantity }}"
+                           min="1" max="{{ book.stock }}" aria-label="Quantity of {{ book.title }}">
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">Update</button>
+                  </form>
+                </td>
+                <td class="text-end text-nowrap fw-semibold">{{ item.cost }} ₴</td>
+                <td class="text-end">
+                  <form method="post" action="{% url 'cart:remove' book.pk %}">
+                    {% csrf_token %}
+                    <button class="btn btn-sm btn-outline-danger" type="submit"
+                            aria-label="Remove {{ book.title }}">&times;</button>
+                  </form>
+                </td>
+              </tr>
+            {% endwith %}
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th scope="row" colspan="4" class="text-end">Total</th>
+            {# cart.total reuses the items loaded for the table: no second query #}
+            <td class="text-end text-nowrap fs-5 fw-semibold">{{ cart.total }} ₴</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="card-footer d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'books:list' %}">&larr; Continue shopping</a>
+      <form class="ms-auto" method="post" action="{% url 'cart:clear' %}">
+        {% csrf_token %}
+        <button class="btn btn-outline-danger" type="submit">Clear cart</button>
+      </form>
+    </div>
+  </div>
+{% else %}
+  <div class="alert alert-info">
+    The cart is empty.
+    <a class="alert-link" href="{% url 'books:list' %}">Go to the catalog</a>
+  </div>
+{% endif %}
+{% endblock %}

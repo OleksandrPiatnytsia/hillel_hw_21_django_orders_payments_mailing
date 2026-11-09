@@ -27,6 +27,23 @@
       <div class="text-end">
         <div class="fs-4 fw-semibold">{{ book.price }} ₴</div>
         {% include "books/includes/stock_badge.html" with book=book %}
+
+        {% if book.stock %}
+          <form class="d-flex justify-content-end gap-2 mt-3" method="post"
+                action="{% url 'cart:add' book.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            {# max is a hint for the browser; Cart.add() limits by stock itself #}
+            <input class="form-control" style="width: 5rem" type="number" name="quantity"
+                   value="1" min="1" max="{{ book.stock }}" aria-label="Quantity">
+            <button class="btn btn-primary text-nowrap" type="submit">Add to cart</button>
+          </form>
+        {% endif %}
+        {% if in_cart %}
+          <div class="small mt-2">
+            In your <a href="{% url 'cart:detail' %}">cart</a>: {{ in_cart }}
+          </div>
+        {% endif %}
       </div>
     </div>
 

@@ -82,6 +82,23 @@
                 <span class="fw-semibold">{{ book.price }} ₴</span>
                 {% include "books/includes/stock_badge.html" with book=book %}
               </div>
+
+              {# The stretched-link above covers the whole card with a link #}
+              {# (::after, z-index 1); position-relative + z-2 put the form #}
+              {# above it, so the button gets the click, not the link #}
+              <form class="position-relative z-2 mt-2 d-grid" method="post"
+                    action="{% url 'cart:add' book.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="quantity" value="1">
+                {# Back to this page with its filters and page number #}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                {# Out of stock: invisible (visibility: hidden) keeps the button's #}
+                {# space, so price rows stay aligned across the cards in a row; #}
+                {# the "Out of stock" badge already explains why. disabled: the #}
+                {# form can't be sent anyway (Cart.add() would refuse it too). #}
+                <button class="btn btn-sm btn-outline-primary {% if not book.stock %}invisible{% endif %}"
+                        type="submit" {% if not book.stock %}disabled{% endif %}>Add to cart</button>
+              </form>
             </div>
           </article>
         </div>

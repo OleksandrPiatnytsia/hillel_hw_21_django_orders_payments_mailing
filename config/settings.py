@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     # Local apps
     "users",
     "books",
+    "cart",
     "orders",
     "payments",
 ]
@@ -120,6 +121,8 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                # "cart" in every template: navbar counter, cart page
+                "cart.context_processors.cart",
             ],
         },
     },

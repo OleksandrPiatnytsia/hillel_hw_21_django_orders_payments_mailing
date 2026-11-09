@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}My orders{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">My orders</h1>
+
+{% if orders %}
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th scope="col">Order</th>
+            <th scope="col">Date</th>
+            <th scope="col" class="text-end">Books</th>
+            <th scope="col" class="text-end">Total</th>
+            <th scope="col">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for order in orders %}
+            {# position-relative: the stretched-link covers only this row #}
+            <tr class="position-relative">
+              <td>
+                <a class="stretched-link text-decoration-none fw-semibold" href="{{ order.get_absolute_url }}">{{ order }}</a>
+              </td>
+              <td class="text-nowrap">{{ order.created_at|date:"d.m.Y H:i" }}</td>
+              {# books_count: annotated in OrderListView, no query per row #}
+              <td class="text-end">{{ order.books_count }}</td>
+              <td class="text-end text-nowrap">{{ order.total }} ₴</td>
+              <td class="text-nowrap">{% include "orders/includes/status_badges.html" with order=order %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% include "includes/pagination.html" %}
+{% else %}
+  <div class="alert alert-info">
+    You have no orders yet.
+    <a class="alert-link" href="{% url 'books:list' %}">Go to the catalog</a>
+  </div>
+{% endif %}
+{% endblock %}

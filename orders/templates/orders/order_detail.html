@@ -3,16 +3,17 @@
 {% block title %}{{ order }}{% endblock %}
 
 {% block content %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{% url 'orders:list' %}">My orders</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ order }}</li>
+  </ol>
+</nav>
+
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
   <h1 class="h3 mb-0">{{ order }}</h1>
   <div class="d-flex gap-2">
-    {# get_<field>_display(): the label of the choice ("Partially paid") #}
-    <span class="badge {% if order.status == 'cancelled' %}text-bg-secondary{% else %}text-bg-primary{% endif %}">
-      {{ order.get_status_display }}
-    </span>
-    <span class="badge {% if order.payment_status == 'paid' %}text-bg-success{% elif order.payment_status == 'partially_paid' %}text-bg-warning{% else %}text-bg-light border{% endif %}">
-      {{ order.get_payment_status_display }}
-    </span>
+    {% include "orders/includes/status_badges.html" with order=order %}
   </div>
 </div>
 
@@ -66,6 +67,17 @@
         <p class="small text-body-secondary mb-0">
           Created {{ order.created_at|date:"d.m.Y H:i" }}
         </p>
+        {% if order.payment_status == "partially_paid" %}
+          {# paid_amount / paid_percent: calculated from the payments, not stored #}
+          <hr>
+          <p class="small mb-1">
+            Paid {{ order.paid_amount }} of {{ order.total }} ₴ ({{ order.paid_percent }}%)
+          </p>
+          <div class="progress" role="progressbar" aria-label="Paid"
+               aria-valuenow="{{ order.paid_percent }}" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar bg-warning" style="width: {{ order.paid_percent }}%"></div>
+          </div>
+        {% endif %}
       </div>
       {% if order.can_be_cancelled_by_customer %}
         <div class="card-footer">

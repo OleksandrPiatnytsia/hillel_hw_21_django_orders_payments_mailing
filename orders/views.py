@@ -1,8 +1,12 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db.models import Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
+from django.views.generic import ListView
 
+from books.views import ElidedPaginationMixin
 from cart.cart import Cart
 
 from .forms import CheckoutForm
@@ -51,6 +55,30 @@ def checkout(request):
         form = CheckoutForm(initial={"full_name": request.user.get_full_name()})
 
     return render(request, "orders/checkout.html", {"form": form})
+
+
+class OrderListView(LoginRequiredMixin, ElidedPaginationMixin, ListView):
+    """My orders: only the current user's, newest first (Order.Meta.ordering).
+
+    Template: orders/order_list.html
+    """
+
+    context_object_name = "orders"
+    paginate_by = 20
+
+    def get_queryset(self):
+        return (
+            Order.objects.filter(user=self.request.user)
+            .annotate(
+                # Copies in the order (2 + 1 = 3), calculated by the database
+                # in the same query: GROUP BY order + SUM, not one query per row
+                books_count=Sum("items__quantity")
+            )
+            # Explicit: Django drops Meta.ordering from queries with GROUP BY
+            # (aggregation), the list would come in any order. "-pk": a stable
+            # order for equal dates, so pages don't repeat or skip orders.
+            .order_by("-created_at", "-pk")
+        )
 
 
 @login_required

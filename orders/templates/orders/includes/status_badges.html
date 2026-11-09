@@ -1,0 +1,11 @@
+{% comment %}
+Two badges: fulfilment status + payment status.
+Usage: {% include "orders/includes/status_badges.html" with order=order %}
+get_<field>_display: the label of the choice ("Partially paid").
+{% endcomment %}
+<span class="badge {% if order.status == 'cancelled' %}text-bg-secondary{% elif order.status == 'completed' %}text-bg-success{% elif order.status == 'new' %}text-bg-primary{% else %}text-bg-info{% endif %}">
+  {{ order.get_status_display }}
+</span>
+<span class="badge {% if order.payment_status == 'paid' %}text-bg-success{% elif order.payment_status == 'partially_paid' %}text-bg-warning{% else %}text-bg-light border{% endif %}">
+  {{ order.get_payment_status_display }}
+</span>

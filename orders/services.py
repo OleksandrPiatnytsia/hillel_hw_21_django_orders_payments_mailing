@@ -1,0 +1,161 @@
+"""Business logic of orders: create an order from the cart, cancel an order.
+
+Kept out of the views: the same functions are used by the checkout page,
+the "Cancel" button, the admin (stage 8) and the cancel_unpaid_orders
+command, and the rules (locks, stock) must be the same everywhere.
+"""
+
+from django.db import transaction
+from django.db.models import F
+
+from books.models import Book
+
+from .models import Order, OrderItem
+
+
+class OrderError(Exception):
+    """An order can't be created or cancelled; the text is shown to the user."""
+
+    def __init__(self, messages):
+        # A list: checkout reports every book with a problem at once,
+        # not only the first one
+        self.messages = messages if isinstance(messages, list) else [messages]
+        super().__init__("; ".join(self.messages))
+
+
+def create_order(user, quantities, *, full_name, phone, address):
+    """Create an order from {book_id: quantity} and reserve the stock.
+
+    Everything inside transaction.atomic(): either the order, all its items
+    and all stock changes are saved together, or nothing (an exception in
+    the middle rolls back the whole transaction — no order without items,
+    no stock taken for an order that doesn't exist).
+
+    Flow:
+    1. Lock the rows of the ordered books (SELECT ... FOR UPDATE).
+    2. Check that every book exists and has enough stock.
+    3. Create the Order and its OrderItems with the current prices.
+    4. Reserve: stock -= quantity for every book.
+    5. COMMIT: the locks are released.
+
+    Raises OrderError if the cart is empty or something is missing; the
+    database stays unchanged then.
+    """
+    if not quantities:
+        raise OrderError("The cart is empty.")
+
+    with transaction.atomic():
+        # select_for_update(): other transactions that want to lock or
+        # change these rows WAIT until this one ends. Without the lock two
+        # users could both read stock = 1 and both buy the last copy:
+        #   A: reads stock 1 -> ok        B: reads stock 1 -> ok
+        #   A: stock = 0                  B: stock = 0  (2 copies sold, 1 existed)
+        # With the lock B waits on its SELECT, then reads stock 0 -> error.
+        #
+        # order_by("pk"): every checkout locks the books in the same order.
+        # Otherwise A could lock book 1 and wait for book 2, while B locked
+        # book 2 and waits for book 1 -> deadlock (PostgreSQL would cancel one).
+        #
+        # No select_related() here: it would also lock the joined rows
+        # (authors) — not needed for a stock check.
+        books = {
+            book.pk: book
+            for book in Book.objects.select_for_update()
+            .filter(pk__in=quantities)
+            .order_by("pk")
+        }
+
+        problems = []
+        for book_id, quantity in quantities.items():
+            book = books.get(book_id)
+            if book is None:
+                problems.append("A book from your cart is no longer sold.")
+            elif book.stock < quantity:
+                if book.stock == 0:
+                    problems.append(f"“{book.title}” is out of stock.")
+                else:
+                    problems.append(
+                        f"“{book.title}”: only {book.stock} left, you ordered {quantity}."
+                    )
+        if problems:
+            # Leaving the "with" block with an exception = ROLLBACK
+            # (here nothing was written yet, but the locks are released too)
+            raise OrderError(problems)
+
+        order = Order.objects.create(
+            user=user,
+            full_name=full_name,
+            phone=phone,
+            address=address,
+        )
+
+        items = []
+        total = 0
+        for book_id, quantity in quantities.items():
+            book = books[book_id]
+            items.append(
+                OrderItem(
+                    order=order,
+                    book=book,
+                    # Copies: the order keeps the title and price of today
+                    title=book.title,
+                    price=book.price,
+                    quantity=quantity,
+                )
+            )
+            total += book.price * quantity
+            # Reserve: the copies are taken from the stock now, not after
+            # payment, so nobody else can buy them while this user pays.
+            # Returned only if the order is cancelled (cancel_order()).
+            book.stock -= quantity
+
+        # One INSERT for all items, one UPDATE for all books
+        OrderItem.objects.bulk_create(items)
+        Book.objects.bulk_update(books.values(), ["stock"])
+
+        order.total = total
+        order.save(update_fields=["total", "updated_at"])
+
+        # Stage 4: transaction.on_commit(<send the "order created" email>)
+        # — the email must go only after COMMIT, never for a rolled-back order.
+
+    return order
+
+
+def cancel_order(order_id, *, user=None):
+    """Cancel an order and return its books to the stock.
+
+    user=None: a manager (admin) or a command — any not cancelled order.
+    user=<User>: the customer — only their own order, only while
+    Order.can_be_cancelled_by_customer is True.
+
+    Raises OrderError if the order can't be cancelled.
+    """
+    with transaction.atomic():
+        # Lock the order first: a payment (stage 7 webhook) that arrives at
+        # the same moment waits, so "cancelled" and "paid" can't both win.
+        # The rules are checked AFTER the lock, on the fresh row.
+        order = Order.objects.select_for_update().get(pk=order_id)
+
+        if user is not None:
+            if order.user_id != user.pk:
+                # Same text as for a missing order: don't reveal that it exists
+                raise OrderError("Order not found.")
+            if not order.can_be_cancelled_by_customer:
+                raise OrderError(f"{order} can't be cancelled any more.")
+        if order.status == Order.Status.CANCELLED:
+            raise OrderError(f"{order} is already cancelled.")
+
+        # Return the reserved copies. F("stock") + n: the addition happens
+        # in SQL (UPDATE ... SET stock = stock + n), on the current value.
+        # The books are locked by the UPDATE itself; going in book_id order
+        # keeps the lock order the same as in create_order().
+        for item in order.items.order_by("book_id"):
+            Book.objects.filter(pk=item.book_id).update(
+                stock=F("stock") + item.quantity
+            )
+
+        order.status = Order.Status.CANCELLED
+        order.save(update_fields=["status", "updated_at"])
+
+    return order

@@ -79,6 +79,9 @@
         {% csrf_token %}
         <button class="btn btn-outline-danger" type="submit">Clear cart</button>
       </form>
+      {# A guest is sent to the login page first (login_required) and #}
+      {# comes back here via ?next=; the cart is kept through the login #}
+      <a class="btn btn-primary" href="{% url 'orders:checkout' %}">Checkout &rarr;</a>
     </div>
   </div>
 {% else %}

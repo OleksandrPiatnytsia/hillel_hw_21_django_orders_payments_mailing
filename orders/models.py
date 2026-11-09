@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.urls import reverse
 
 
 class Order(models.Model):
@@ -82,6 +83,21 @@ class Order(models.Model):
 
     def __str__(self):
         return f"Order #{self.pk}"
+
+    def get_absolute_url(self):
+        return reverse("orders:detail", kwargs={"pk": self.pk})
+
+    @property
+    def can_be_cancelled_by_customer(self):
+        """The customer may cancel only a new order that nobody paid for yet.
+
+        Later (processing, shipped) or after any payment only a manager can
+        cancel it (admin, stage 8): goods may be packed, money must be returned.
+        """
+        return (
+            self.status == self.Status.NEW
+            and self.payment_status == self.PaymentStatus.UNPAID
+        )
 
 
 class OrderItem(models.Model):

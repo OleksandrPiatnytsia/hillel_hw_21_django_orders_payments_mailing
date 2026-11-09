@@ -154,6 +154,14 @@ class Cart:
         # start: an empty cart gives Decimal("0.00"), not the int 0
         return sum((item["cost"] for item in self._get_items()), start=Decimal("0.00"))
 
+    def quantities(self):
+        """{book_id: quantity} — the cart as plain data for checkout.
+
+        orders.services gets only this dict: it doesn't need to know how the
+        cart is stored, and it reads prices and stock from the database itself.
+        """
+        return {int(key): data["quantity"] for key, data in self.cart.items()}
+
     def quantity_of(self, book):
         """How many copies of this book are in the cart (0 if none)."""
         return self.cart.get(str(book.pk), {}).get("quantity", 0)

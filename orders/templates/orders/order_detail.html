@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}{{ order }}{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <h1 class="h3 mb-0">{{ order }}</h1>
+  <div class="d-flex gap-2">
+    {# get_<field>_display(): the label of the choice ("Partially paid") #}
+    <span class="badge {% if order.status == 'cancelled' %}text-bg-secondary{% else %}text-bg-primary{% endif %}">
+      {{ order.get_status_display }}
+    </span>
+    <span class="badge {% if order.payment_status == 'paid' %}text-bg-success{% elif order.payment_status == 'partially_paid' %}text-bg-warning{% else %}text-bg-light border{% endif %}">
+      {{ order.get_payment_status_display }}
+    </span>
+  </div>
+</div>
+
+<div class="row g-4">
+
+  {# ---------- Items ---------- #}
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead>
+            <tr>
+              <th scope="col">Book</th>
+              <th scope="col" class="text-end">Price</th>
+              <th scope="col" class="text-end">Quantity</th>
+              <th scope="col" class="text-end">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {# items__book from prefetch_related: no query per row #}
+            {% for item in order.items.all %}
+              <tr>
+                {# item.title / item.price: copies from the moment of ordering #}
+                <td><a class="text-decoration-none" href="{{ item.book.get_absolute_url }}">{{ item.title }}</a></td>
+                <td class="text-end text-nowrap">{{ item.price }} ₴</td>
+                <td class="text-end">{{ item.quantity }}</td>
+                <td class="text-end text-nowrap">{{ item.cost }} ₴</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row" colspan="3" class="text-end">Total</th>
+              <td class="text-end text-nowrap fs-5 fw-semibold">{{ order.total }} ₴</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ---------- Delivery + actions ---------- #}
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header fw-semibold">Delivery</div>
+      <div class="card-body">
+        <p class="mb-1">{{ order.full_name }}</p>
+        <p class="mb-1">{{ order.phone }}</p>
+        {# linebreaksbr: line breaks of the address textarea -> <br> #}
+        <p class="mb-3">{{ order.address|linebreaksbr }}</p>
+        <p class="small text-body-secondary mb-0">
+          Created {{ order.created_at|date:"d.m.Y H:i" }}
+        </p>
+      </div>
+      {% if order.can_be_cancelled_by_customer %}
+        <div class="card-footer">
+          <form method="post" action="{% url 'orders:cancel' order.pk %}"
+                onsubmit="return confirm('Cancel {{ order }}? The books will go back to stock.');">
+            {% csrf_token %}
+            <button class="btn btn-outline-danger w-100" type="submit">Cancel order</button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

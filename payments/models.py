@@ -1,0 +1,83 @@
+from decimal import Decimal
+
+from django.core.validators import MinValueValidator
+from django.db import models
+
+
+class Payment(models.Model):
+    """One attempt to pay (part of) an order through one provider.
+
+    An order may have several payments:
+    - a Stripe Checkout Session expired -> the user presses "Pay" again ->
+      a new Payment, the old one stays as "expired" (history);
+    - a manager enters a manual payment for a part of the sum ->
+      the order becomes partially_paid.
+    Only payments with status "succeeded" count towards the order's
+    payment_status (Order.refresh_payment_status(), stage 5).
+    """
+
+    class Provider(models.TextChoices):
+        STRIPE = "stripe", "Stripe"
+        # Entered by a manager in the admin: cash, bank transfer, ...
+        MANUAL = "manual", "Manual"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"  # created, waiting for the provider
+        SUCCEEDED = "succeeded", "Succeeded"  # money received
+        FAILED = "failed", "Failed"  # the provider refused
+        EXPIRED = "expired", "Expired"  # the user didn't pay in time
+
+    order = models.ForeignKey(
+        "orders.Order",
+        # PROTECT: a payment is a financial record; an order with payments
+        # can't be deleted (cancel it instead)
+        on_delete=models.PROTECT,
+        related_name="payments",  # order.payments.all()
+    )
+    provider = models.CharField(max_length=20, choices=Provider)
+    # Id of the payment on the provider's side, for Stripe the Checkout
+    # Session id "cs_test_...". The webhook finds the Payment by it.
+    # Empty for manual payments.
+    external_id = models.CharField(max_length=255, blank=True)
+    # In UAH. For Stripe it's the order total; a manual payment may be any
+    # positive part of it.
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0.01"))],
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status,
+        default=Status.PENDING,
+    )
+    # Raw data from the provider (e.g. the webhook event) or a manager's
+    # note, for debugging and disputes. default=dict: a new empty dict for
+    # every payment (default={} would share one dict object).
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    # When the money was received; empty until status is "succeeded"
+    paid_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            # The same provider id can't be saved twice: Stripe may deliver
+            # one webhook several times, and two Payment rows for one
+            # Checkout Session would count the money twice.
+            # condition: only for non-empty ids, otherwise the second manual
+            # payment (external_id = "") would break the rule.
+            models.UniqueConstraint(
+                fields=["provider", "external_id"],
+                condition=~models.Q(external_id=""),
+                name="payments_payment_unique_external_id",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name="payments_payment_amount_positive",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_provider_display()} {self.amount} UAH ({self.get_status_display()}) for order #{self.order_id}"

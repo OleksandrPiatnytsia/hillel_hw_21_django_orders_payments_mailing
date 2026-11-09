@@ -52,6 +52,8 @@ INSTALLED_APPS = [
     # Local apps
     "users",
     "books",
+    "orders",
+    "payments",
 ]
 
 # Custom user model (users.User instead of auth.User). Must be set before

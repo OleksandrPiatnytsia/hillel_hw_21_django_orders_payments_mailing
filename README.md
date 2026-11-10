@@ -2,11 +2,14 @@
 
 Навчальний Django-проєкт (Hillel). Продовження ДЗ №18 (книгарня в Docker). У цьому ДЗ:
 
-- **моделі `Order` і `OrderItem`**, створення замовлення в `transaction.atomic`;
-- **кошик у сесії** (`cart.py`: додати, видалити, очистити);
-- **оплата через Stripe Checkout Session**;
-- **email** після створення замовлення;
-- **адмінка**: `OrderItem` як inline в `Order`;
+- **кошик у сесії** (`cart/cart.py`, клас `Cart`: додати, видалити, очистити), лічильник у навбарі;
+- **моделі `Order` і `OrderItem`**: оформлення в `transaction.atomic` з `select_for_update`
+  і резервом книг на складі, скасування повертає книги;
+- **оплата через Stripe Checkout Session** + webhook через Stripe CLI; часткові ручні оплати;
+- **email через Gmail SMTP**: «order created» і «payment received» після COMMIT;
+- **адмінка**: `OrderItem` і платежі як inline в `Order`, ручні платежі, скасування;
+- «My orders», дані доставки в профілі (підставляються при оформленні);
+- команда `cancel_unpaid_orders`;
 - **спільні volume** бази й обкладинок для всіх наступних ДЗ (без перенесення даних).
 
 ## Стек
@@ -17,6 +20,8 @@
 - Bootstrap 5.3 (через CDN, із перевіркою `integrity`)
 - Pillow: перевірка зображень для `ImageField`
 - python-dotenv: налаштування з `.env`
+- Stripe: `stripe` 16 (Checkout Session, перевірка підпису webhook), Stripe CLI 1.55 у Docker
+- Gmail SMTP через `MAILERS` (новий формат налаштувань пошти в Django 6.1)
 - django-debug-toolbar 8.0 (тільки для розробки, `requirements-dev.txt`)
 
 ## Сторінки сайту
@@ -33,13 +38,26 @@
 | `/accounts/login/` | `users:login` | `UserLoginView` | усі | вхід (за username) |
 | `/accounts/logout/` | `users:logout` | `UserLogoutView` | POST | вихід |
 | `/accounts/signup/` | `users:signup` | `SignUpView` | гості | реєстрація |
-| `/accounts/profile/` | `users:profile` | `ProfileView` | залогінені | групи й права поточного користувача |
+| `/accounts/profile/` | `users:profile` | `ProfileView` | залогінені | дані доставки, групи й права поточного користувача |
+| `/accounts/profile/edit/` | `users:profile_edit` | `ProfileEditView` | залогінені | ім'я, телефон, адреса доставки |
+| `/cart/` | `cart:detail` | `cart_detail` | усі | кошик |
+| `/cart/add/<book_id>/` | `cart:add` | `cart_add` | POST | додати книгу або задати кількість (`override`) |
+| `/cart/remove/<book_id>/` | `cart:remove` | `cart_remove` | POST | прибрати книгу з кошика |
+| `/cart/clear/` | `cart:clear` | `cart_clear` | POST | очистити кошик |
+| `/orders/` | `orders:list` | `OrderListView` | залогінені | My orders: власні замовлення, по 20 |
+| `/orders/checkout/` | `orders:checkout` | `checkout` | залогінені | форма доставки й створення замовлення |
+| `/orders/<pk>/` | `orders:detail` | `order_detail` | власник (інакше 404) | замовлення, кнопки Pay і Cancel |
+| `/orders/<pk>/cancel/` | `orders:cancel` | `order_cancel` | POST, власник | скасувати нове неоплачене замовлення |
+| `/payments/pay/<order_id>/` | `payments:pay` | `pay` | POST, власник | на сторінку оплати Stripe |
+| `/payments/success/` | `payments:success` | `payment_success` | залогінені | повернення зі Stripe, `?session_id=...` |
+| `/payments/cancelled/<payment_id>/` | `payments:cancelled` | `payment_cancelled` | залогінені | «назад» зі Stripe |
+| `/payments/webhook/<provider>/` | `payments:webhook` | `webhook` | POST, підпис Stripe | події від Stripe |
 | `/admin/` | `admin:index` | | `is_staff` | адмінка |
 | `/health/` | `health` | `health` (`config/views.py`) | усі, GET | стан PostgreSQL і Redis: 200 або 503, JSON |
 | `/__debug__/` | | | `DEBUG` + `INTERNAL_IPS` | службові адреси Debug Toolbar |
 
-Маршрути описані в `books/urls.py` (`app_name = "books"`) і `users/urls.py`
-(`app_name = "users"`) і підключені в `config/urls.py` через `include()`. У шаблонах і коді адреси
+Маршрути описані в `urls.py` кожного застосунку (`app_name` = `books`, `users`,
+`cart`, `orders`, `payments`) і підключені в `config/urls.py` через `include()`. У шаблонах і коді адреси
 будуються тільки за іменами: `{% url 'books:detail' book.pk %}`,
 `reverse_lazy("books:list")`.
 
@@ -48,14 +66,15 @@
 ```
 config/
 ├── settings.py              # PostgreSQL, Redis, WhiteNoise, AUTH_USER_MODEL, Debug Toolbar, LOGGING
-├── urls.py                  # admin + books + accounts/ + health/ + media і __debug__ у DEBUG
+├── urls.py                  # admin + books + accounts/ + cart/ + orders/ + payments/ + health/
 ├── views.py                 # health: перевірка PostgreSQL і Redis
 ├── middleware.py            # RequestTimingMiddleware
 └── logging_filters.py       # HideClientErrorTraceback (403/404 без traceback)
 users/
-├── models.py                # User(AbstractUser): email обов'язковий, унікальний, lowercase
-├── forms.py                 # LoginForm, SignUpForm (+ Bootstrap-класи)
-├── views.py                 # UserLoginView, UserLogoutView, SignUpView, ProfileView
+├── models.py                # User(AbstractUser): email lowercase і унікальний; phone, address
+├── forms.py                 # LoginForm, SignUpForm, ProfileForm (+ Bootstrap-класи)
+├── phone.py                 # normalize_phone(): спільна перевірка телефону
+├── views.py                 # UserLoginView, UserLogoutView, SignUpView, ProfileView, ProfileEditView
 ├── urls.py                  # app_name = "users"
 ├── admin.py                 # UserAdmin з email на сторінці «Add user»
 ├── signals.py               # логування входу, виходу й невдалих спроб
@@ -63,10 +82,12 @@ users/
 ├── migrations/
 │   ├── 0001_initial.py
 │   ├── 0002_lowercase_email.py    # дані → lowercase + CheckConstraint
-│   └── 0003_create_groups.py      # групи Customers / Editors / Managers
+│   ├── 0003_create_groups.py      # групи Customers / Editors / Managers
+│   └── 0004_user_address_user_phone.py
 └── templates/users/
     ├── auth_form.html       # спільний для входу й реєстрації
-    └── profile.html
+    ├── profile.html
+    └── profile_edit.html
 books/
 ├── models.py                # Category, Author, Book (+ cover), BookCategory, BookQuerySet
 ├── forms.py                 # BookForm, BookFilterForm, CoverInput
@@ -85,9 +106,38 @@ books/
 └── management/commands/
     ├── seed_books.py
     └── book_stats.py
+cart/
+├── cart.py                  # Cart: кошик у сесії
+├── forms.py                 # CartAddForm (quantity, override)
+├── views.py                 # cart_detail, cart_add, cart_remove, cart_clear
+├── context_processors.py    # "cart" у кожному шаблоні (лічильник у навбарі)
+└── templates/cart/cart_detail.html
+orders/
+├── models.py                # Order, OrderItem; paid_amount, amount_due, refresh_payment_status()
+├── services.py              # create_order(), cancel_order(): транзакції й блокування
+├── forms.py                 # CheckoutForm
+├── views.py                 # checkout, OrderListView, order_detail, order_cancel
+├── emails.py                # send_order_email(), лист «order created»
+├── admin.py                 # OrderAdmin: inline позицій і платежів, скасування
+├── migrations/0002_managers_order_permissions.py   # права групи Managers
+├── management/commands/cancel_unpaid_orders.py
+└── templates/orders/        # checkout, order_detail, order_list, includes/, emails/
+payments/
+├── models.py                # Payment
+├── services.py              # ручні платежі, start_online_payment(), webhook-статуси
+├── providers/
+│   ├── base.py              # PaymentProvider: контракт провайдера
+│   ├── stripe_checkout.py   # StripeProvider: Checkout Session, webhook
+│   ├── manual.py            # ManualProvider: платежі від менеджера
+│   └── registry.py          # "stripe" / "manual" -> об'єкт провайдера
+├── views.py                 # pay, payment_success, payment_cancelled, webhook
+├── emails.py                # лист «payment received»
+├── admin.py                 # inline для замовлення, список платежів
+└── templates/payments/      # payment_success, emails/
 templates/                   # спільні шаблони проєкту
 ├── base.html
 ├── 403.html                 # «Access denied»
+├── 404.html                 # «Page not found» (лише при DEBUG=False)
 └── includes/
     ├── navbar.html
     ├── messages.html
@@ -104,7 +154,7 @@ requirements-dev.txt         # + django-debug-toolbar
 Dockerfile                   # образ web: python:3.13-slim, користувач app, gunicorn
 .dockerignore                # що не потрапляє в образ (.env, .venv, бази, media)
 docker-entrypoint.sh         # migrate + collectstatic, потім exec команди
-docker-compose.yml           # web + db + redis, volumes, healthchecks
+docker-compose.yml           # web + db + redis + stripe-cli, volumes, healthchecks
 .gitattributes               # *.sh завжди з LF
 ```
 
@@ -165,7 +215,7 @@ LOGOUT_REDIRECT_URL = "books:list"
 |---|---|---|
 | **Customers** | `view_book`, `view_author`, `view_category` | лише переглядати; дається кожному новому користувачу |
 | **Editors** | Customers + `add/change_book`, `add/change_author`, права на `bookcategory` | додавати й редагувати книжки й авторів |
-| **Managers** | Editors + `delete_book`, `delete_author`, `add/change/delete_category`, `manage_stock` | усе, зокрема видаляти й змінювати склад |
+| **Managers** | Editors + `delete_book`, `delete_author`, `add/change/delete_category`, `manage_stock`; замовлення: `view/change_order`, `view_orderitem`, `view_payment`, `add_payment` | усе в каталозі; замовлення в адмінці: статус, доставка, скасування, ручні платежі |
 
 Суперкористувач має всі права без груп. Додати користувача в групу:
 адмінка → Users → користувач → Groups.
@@ -174,6 +224,12 @@ Permissions зазвичай створює сигнал `post_migrate`, тоб�
 міграцій. На новій базі їх ще немає в момент `0003`, тому міграція спершу
 викликає `create_permissions()` сама. Якщо в назві права помилка, міграція
 падає з `RuntimeError`. Відкат (`migrate users 0002`) видаляє групи.
+
+Права на замовлення додає окрема міграція `orders/0002_managers_order_permissions.py`
+(тим самим способом). Вона робить `group.permissions.add()`, а не `set()`, тому
+каталожні права групи лишаються; відкат прибирає лише ці 5 прав. Права на
+видалення замовлень і на зміну чи видалення платежів не даються нікому:
+замовлення скасовують, а платежі змінює лише `payments/services.py`.
 
 ### Перевірка прав
 
@@ -205,8 +261,13 @@ DevTools не вийде. Редактор створює книжку з `stock
 
 ### Профіль
 
-`/accounts/profile/` показує групи, статус (superuser / staff), коротке
-«що я можу» (✅/❌) і повний список `user.get_all_permissions()`.
+`/accounts/profile/` показує дані доставки (ім'я, телефон, адреса) з кнопкою «Edit»,
+групи, статус (superuser / staff), коротке «що я можу» (✅/❌) і повний список
+`user.get_all_permissions()`.
+
+`/accounts/profile/edit/` (`ProfileEditView`): ім'я, прізвище, телефон, адреса.
+`get_object()` повертає `request.user`, `<pk>` в адресі немає, тому чужий профіль
+не відкриєш. Телефон перевіряє та сама `normalize_phone()`, що й при оформленні.
 
 ## Django Debug Toolbar
 
@@ -248,6 +309,8 @@ ENABLE_DEBUG_TOOLBAR = (
 |---|---|---|
 | `users` | DEBUG при `DEBUG=True`, інакше INFO | вхід, вихід, невдалий вхід (WARNING), реєстрація |
 | `books` | так само | створення, зміна (`form.changed_data`), видалення книжок, хто це зробив |
+| `orders` | DEBUG / INFO | листи (надіслано / помилка з traceback), `cancel_unpaid_orders` |
+| `payments` | DEBUG / INFO | створення сторінки оплати, зміни статусів платежів, події webhook |
 | `config` | INFO | рядок на кожен запит від `RequestTimingMiddleware` |
 | `django` | WARNING | 404, 403 одним рядком; 500 з traceback |
 
@@ -319,8 +382,9 @@ INFO config.middleware GET /create/ 403 3.6ms user=ann
 - `navbar.html`: прилипає до верху під час прокручування (`sticky-top`),
   підсвічує активний пункт меню (`request.resolver_match.url_name`), має
   швидкий пошук і на вузькому екрані згортається в «бургер». Праворуч:
-  «Log in» / «Sign up» для гостей або меню користувача (email, «My profile»,
-  «Log out»). «Add book» видно лише з правом `add_book`, «Admin» лише при `is_staff`.
+  «🛒 Cart» з кількістю примірників (і для гостей), «Log in» / «Sign up» для гостей
+  або меню користувача (email, «My profile», «My orders», «Log out»). «Add book» видно
+  лише з правом `add_book`, «Admin» лише при `is_staff`.
 - `pagination.html`: універсальна пагінація для будь-якого `ListView`.
   Тег `{% querystring page=N %}` зберігає поточні фільтри при переході між
   сторінками; довгий список сторінок скорочується (`get_elided_page_range`).
@@ -386,6 +450,19 @@ INFO config.middleware GET /create/ 403 3.6ms user=ann
 `BookQuerySet.by_stock_status()` фільтрує книги за наявністю. Його
 використовують і каталог, і адмінка; поріг «мало» задає `LOW_STOCK_THRESHOLD = 5`.
 
+| Модель | Поля | Примітки |
+|---|---|---|
+| `User` | + `phone`, `address` | необов'язкові; підставляються у форму оформлення |
+| `Order` | `user`, `status`, `payment_status`, `full_name`, `phone`, `address`, `total`, `created_at`, `updated_at` | `user` з `PROTECT`; дані доставки — копія, а не посилання на профіль; `total ≥ 0` (`CheckConstraint`) |
+| `OrderItem` | `order`, `book`, `title`, `price`, `quantity` | `order` з `CASCADE`, `book` з `PROTECT`; `title` і `price` — копії на момент замовлення; один рядок на книгу (`UniqueConstraint`), `quantity ≥ 1`; `cost` = `price × quantity` |
+| `Payment` | `order`, `provider`, `external_id`, `amount`, `status`, `details` (JSON), `created_at`, `updated_at`, `paid_at` | `order` з `PROTECT`; `provider`: `stripe` / `manual`; `status`: `pending` / `succeeded` / `failed` / `expired`; `(provider, external_id)` унікальні для непорожнього `external_id`; `amount > 0` |
+
+Два незалежні статуси замовлення:
+- `status` — що з товаром: `new` → `processing` → `shipped` → `completed`, або `cancelled`;
+- `payment_status` — скільки сплачено: `unpaid` / `partially_paid` / `paid`. Зберігається
+  в базі (для фільтра в адмінці), але змінює його лише `Order.refresh_payment_status()`
+  із суми успішних платежів. Відсоток оплати (`paid_percent`) не зберігається, а рахується.
+
 ### Перенесення авторів в окрему модель
 
 Раніше автор був текстовим полем `Book.author`. Перенесення зроблено
@@ -414,7 +491,214 @@ Django згенерував би `AlterField` і спробував би пер�
 - **Автори:** кількість книг (із сортуванням), пошук за іменем, біографія.
 - **Категорії:** кількість книг (із сортуванням), автозаповнення `slug`,
   inline зі списком книг.
+- **Замовлення** (`orders/admin.py`):
+  - колонки: номер, користувач, статус, статус оплати, сплачений відсоток (підзапит
+    у тому самому SQL), сума, дата; фільтри: статус, оплата, дата; пошук за номером,
+    email, username, ім'ям, телефоном;
+  - inline: книги замовлення й усі платежі (лише перегляд) і рядки «add a manual payment»;
+  - ручний платіж зберігається через `record_manual_payment()` (блокування, перевірка
+    залишку, перерахунок статусу), а не через `formset.save()`;
+  - статус `cancelled` у формі або дія «Cancel selected orders» викликають
+    `cancel_order()`: книги повертаються на склад. Скасоване замовлення не відновлюється;
+  - додавати й видаляти замовлення не можна; зберігаються лише змінені поля
+    (`update_fields`), щоб не перезаписати оплату, що прийшла, поки сторінка була відкрита.
+- **Платежі:** окремий список лише для перегляду (фільтри за провайдером і статусом).
+- **Користувачі:** розділ «Delivery details» (телефон, адреса).
 - Запити оптимізовано через `select_related` / `prefetch_related` та `annotate`.
+
+## Кошик
+
+`cart/cart.py`, клас `Cart`. Кошик живе в сесії, тому працює й для гостей:
+
+```python
+request.session["cart"] = {"15": {"quantity": 2}, "7": {"quantity": 1}}
+```
+
+- Ключі — рядки: сесія зберігається як JSON, а в JSON ключі завжди рядки.
+- Зберігається лише кількість. Ціна щоразу береться з бази: кошик показує поточну
+  ціну, і змінити її через сесію неможливо.
+- `add(book, quantity=1, override=False)`: кнопка «Add to cart» додає до наявного,
+  поле на сторінці кошика (`override=True`) задає точну кількість. Кількість обмежена
+  `book.stock`.
+- `remove(book)`, `clear()`; `for item in cart` → `book`, `quantity`, `price`, `cost`,
+  `exceeds_stock`. Усі книги одним запитом (`in_bulk`), результат кешується, тож
+  `cart.total` другого запиту не робить. Видалені з бази книги тихо зникають з кошика.
+- `len(cart)` — кількість примірників, читає лише сесію, без SQL: лічильник у навбарі
+  є на кожній сторінці (context processor `cart.context_processors.cart`).
+- Зміна вкладеного словника не позначає сесію зміненою, тому `_save()` щоразу
+  присвоює `session["cart"]` і ставить `session.modified = True`.
+- При вході Django зберігає дані сесії (змінюється лише її id), тож кошик гостя
+  лишається після входу. Вихід очищає сесію разом із кошиком.
+- Усі зміни — лише POST (`require_POST`); після дії повертає на `next`, перевірений
+  через `url_has_allowed_host_and_scheme` (без переадресації на чужий сайт).
+
+## Замовлення
+
+### Оформлення: `orders.services.create_order()`
+
+```
+POST /orders/checkout/  (форма: full_name, phone, address)
+  transaction.atomic():
+    1. SELECT ... FOR UPDATE книг із кошика, ORDER BY id
+    2. перевірка залишку кожної книги  -> проблема? OrderError -> ROLLBACK, усі проблеми разом
+    3. Order + OrderItem (bulk_create), назви й ціни копіюються з бази
+    4. резерв: stock -= quantity (bulk_update)
+    5. on_commit(лист «order created»)
+  COMMIT -> кошик очищається -> сторінка замовлення з кнопкою «Pay»
+```
+
+- **`transaction.atomic()`:** замовлення, позиції й зміни складу зберігаються разом
+  або не зберігаються взагалі. Немає замовлення без позицій і не списаних «у нікуди» книг.
+- **`select_for_update()`:** без блокування двоє покупців могли б одночасно прочитати
+  `stock = 1` і обидва купити останній примірник. З блокуванням другий чекає COMMIT
+  першого й бачить `stock = 0`. Перевірено двома потоками: одне замовлення, друге
+  отримує «out of stock».
+- **`ORDER BY id`:** усі транзакції блокують книги в однаковому порядку, тому не
+  чекають одна одну по колу (deadlock).
+- **Резерв** при оформленні, а не при оплаті: поки покупець платить, книги ніхто не забере.
+- **Лист після COMMIT** (`transaction.on_commit`): після ROLLBACK лист не піде.
+- Форма містить лише дані доставки; `user`, `total` і статуси ставить сервіс, тож
+  підроблений POST із `total=1` нічого не дасть. Телефон `+380 (67) 123-45-67`
+  зберігається як `+380671234567` (`users/phone.py`).
+- Поля підставляються з профілю (`first_name` + `last_name`, `phone`, `address`);
+  галочка «Save phone and address to my profile» оновлює профіль для наступного разу.
+
+### Скасування: `orders.services.cancel_order()`
+
+- Блокує замовлення, перевіряє правила вже під блокуванням, повертає книги
+  (`UPDATE ... SET stock = stock + n` через `F()`), ставить `cancelled`.
+- Покупець може скасувати лише своє замовлення в статусі `new` і `unpaid`
+  (`can_be_cancelled_by_customer`); менеджер — будь-яке не скасоване.
+- Після COMMIT відкрита сторінка оплати Stripe закривається (`close_open_payments`),
+  щоб за скасоване замовлення не можна було заплатити.
+- Чуже замовлення дає 404 (як і неіснуюче), а не 403: так не видно, що замовлення з таким номером є.
+
+### My orders
+
+`/orders/` (меню користувача): власні замовлення від нових до старих, кількість книг
+(`annotate(Sum("items__quantity"))`), сума, бейджі статусів. З `annotate` Django
+ігнорує `Meta.ordering`, тому сортування задано явно: `order_by("-created_at", "-pk")`.
+
+## Оплата
+
+### Провайдери
+
+`payments/providers/`: решта проєкту не імпортує Stripe напряму, а працює з контрактом
+`PaymentProvider` (`start()`, `fetch_status()`, `cancel()`, `handle_webhook()`).
+Новий провайдер — новий клас і рядок у `registry.py`.
+
+| Провайдер | Як платять | Хто створює `Payment` |
+|---|---|---|
+| `stripe` | картка на сторінці Stripe Checkout | кнопка «Pay» |
+| `manual` | готівка, переказ тощо | менеджер в адмінці; сума може бути частиною (→ `partially_paid`) |
+
+Усі зміни платежів (`payments/services.py`) — у транзакції, спочатку блокується
+замовлення (те саме блокування, що в `cancel_order()`), в кінці
+`refresh_payment_status()`. Два менеджери, що одночасно вносять по 120 ₴ на замовлення
+в 200 ₴, не перевищать суму: другий отримає «only 80.00 UAH is due».
+
+### Stripe Checkout
+
+```
+«Pay» -> start_online_payment():
+   transaction (lock order): своє? не скасоване? є що сплачувати?
+       відкрита сторінка на ту саму суму ще жива?  -> її URL (без нової)
+       інакше Payment(pending, amount = amount_due)
+   після транзакції: Stripe API -> Checkout Session (uah, копійки, 31 хв)
+       помилка Stripe -> Payment = failed, замовлення лишається
+-> checkout.stripe.com -> покупець платить
+-> /payments/success/?session_id=cs_test_...  -> статус питаємо в Stripe -> succeeded
+-> Stripe -> stripe-cli -> POST /payments/webhook/stripe/ -> те саме, якщо ще не зроблено
+```
+
+- Одна позиція «Bookstore: order #N» на суму `amount_due`: після часткової ручної
+  оплати списується лише залишок. UAH — валюта з двома знаками, тому сума в копійках
+  (`250.50` → `25050`).
+- Запит до Stripe — **після** транзакції: мережевий виклик не тримає замовлення
+  заблокованим, а відкотити його однаково неможливо.
+- Ключ ідемпотентності (`bookstore-payment-<id>-<час>`): повтор після мережевої
+  помилки не створить другу сесію.
+- Подвійний клік чи «назад» зі Stripe і знову «Pay» дають ту саму сторінку; застаріла
+  (інша сума, менше 5 хв до кінця) закривається через `sessions.expire`.
+- `session_id` в адресі повернення — не доказ оплати (її може набрати будь-хто): за
+  ним лише знаходимо платіж, а статус беремо в Stripe секретним ключем.
+- Сторінка повернення й webhook ведуть до тих самих ідемпотентних функцій: хто
+  перший, той зараховує оплату, другий нічого не змінює (і другого листа немає).
+
+### Webhook
+
+`/payments/webhook/stripe/`, `csrf_exempt` (запит іде від Stripe, не з нашої форми).
+Справжність перевіряє `stripe.Webhook.construct_event()`: HMAC-SHA256 сирого тіла
+(`request.body`) із `STRIPE_WEBHOOK_SECRET` і час не старший 5 хвилин.
+
+| Подія | Що робимо |
+|---|---|
+| `checkout.session.completed` + `payment_status = paid` | платіж `succeeded` |
+| `checkout.session.completed` + `unpaid` | чекаємо (банківські списання приходять пізніше) |
+| `checkout.session.async_payment_succeeded` / `_failed` | `succeeded` / `failed` |
+| `checkout.session.expired` | `expired` (лише з `pending`; замовлення не скасовується) |
+
+- 400 — лише без підпису, з чужим підписом чи зламаним JSON. На інші події й чужі
+  сесії відповідь 200: на будь-яку не-2xx Stripe повторює запит кілька днів.
+- Повтор тієї самої події нічого не змінює; запізніле `expired` не скасує оплату.
+
+**Stripe CLI** (сервіс `stripe-cli` у compose): Stripe не може достукатися до
+`localhost:8000` з інтернету, тому CLI тримає вихідне з'єднання зі Stripe і пересилає
+4 потрібні події на `web:8000/payments/webhook/stripe/` з правильним підписом.
+`web` має `web` в `ALLOWED_HOSTS` (compose додає до `DJANGO_ALLOWED_HOSTS`). Лише для
+розробки: у продакшні Stripe викликає публічний HTTPS-endpoint із Dashboard → Webhooks.
+
+```bash
+docker compose logs -f stripe-cli    # <-- [200] POST http://web:8000/payments/webhook/stripe/
+```
+
+### Акаунт Stripe
+
+- Тестовий режим (`sk_test_...`): реальних грошей немає. Картка `4242 4242 4242 4242`,
+  будь-яка майбутня дата й CVC.
+- Україна не входить до країн, де Stripe-акаунт можна активувати, тому акаунт
+  зареєстровано з підтримуваною країною й ніколи не активовано: лише тестові ключі.
+- UAH Stripe підтримує як валюту платежу. Мінімальна сума — еквівалент 0.50 у валюті
+  виплат акаунта (близько 25 ₴).
+- Publishable key не потрібен: сторінка оплати на боці Stripe, Stripe.js на сайті немає.
+
+## Email
+
+Gmail SMTP через `MAILERS` (Django 6.1; старі `EMAIL_BACKEND`, `EMAIL_HOST`, ...
+застарілі й зникнуть у 7.0):
+
+```python
+MAILERS = {
+    "default": {
+        "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+        "OPTIONS": {"host": "smtp.gmail.com", "port": 587, "use_tls": True,
+                    "username": EMAIL_USER, "password": EMAIL_PASSWORD, "timeout": 10},
+    },
+}
+```
+
+- Пароль — **App Password** Google (16 літер; потрібна двоетапна перевірка), не пароль
+  акаунта. Пробіли з нього прибираються. Ліміт Gmail — близько 500 листів на добу.
+- Без `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` листи друкуються в консоль
+  (`docker compose logs web`). Тести самі підміняють усі mailers на `locmem`.
+- `DEFAULT_FROM_EMAIL = "Bookstore <адреса Gmail>"`: Gmail відправляє лише від імені
+  акаунта, під яким входить.
+- Посилання в листах будуються від `SITE_URL`: лист відправляється без запиту
+  (після COMMIT, з webhook), `request.build_absolute_uri()` там недоступний.
+
+| Лист | Коли |
+|---|---|
+| «order created» | після COMMIT оформлення: позиції, сума, доставка, посилання |
+| «payment received» | Stripe: кожен успішний платіж; ручний: коли замовлення сплачене повністю |
+
+- Кожен лист має текстову й HTML-версії (`EmailMultiAlternatives`); HTML зі стилями
+  в атрибутах `style`, бо Gmail і Outlook ігнорують `<style>`.
+- Відправка ніколи не кидає виняток: помилку SMTP (пароль, мережа, таймаут) записує
+  лог з traceback, а замовлення вже збережене.
+- Відправка синхронна (у межах запиту); Celery — у наступних ДЗ.
+- Перевірити SMTP: `docker compose exec web python manage.py sendtestemail адреса@gmail.com`.
+- Тестові користувачі: адреси з `+` (`адреса+ann@gmail.com`) приходять у ту саму
+  скриньку, а для сайту це різні email.
 
 ## Встановлення та запуск
 
@@ -424,33 +708,40 @@ Django згенерував би `AlterField` і спробував би пер�
 cp .env.example .env
 # згенерувати SECRET_KEY і вставити в .env В ОДИНАРНИХ ЛАПКАХ (див. нижче):
 python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-# заповнити POSTGRES_PASSWORD
+# заповнити POSTGRES_PASSWORD, EMAIL_HOST_USER / EMAIL_HOST_PASSWORD (Gmail), STRIPE_SECRET_KEY
 
+# спільні volume створюються один раз (див. «Спільні volume»)
+docker volume create hillel_bookstore_postgres_data && docker volume create hillel_bookstore_media_data
+
+docker compose run --rm --no-deps stripe-cli listen --print-secret   # whsec_... -> STRIPE_WEBHOOK_SECRET у .env
 docker compose up --build -d                                   # зібрати образ і запустити
-docker compose ps                                              # усі три сервіси (healthy)
+docker compose ps                                              # db, redis, web healthy; stripe-cli running
 docker compose exec web python manage.py createsuperuser
-docker compose exec web python manage.py seed_books            # або перенести дані, див. нижче
+docker compose exec web python manage.py seed_books            # якщо база порожня
 ```
 
 - Сайт: http://localhost:8000/
 - Адмінка: http://localhost:8000/admin/
 - Стан: http://localhost:8000/health/
-- Лог: `docker compose logs -f web`
+- Лог: `docker compose logs -f web`, події Stripe: `docker compose logs -f stripe-cli`
 
 ```
 docker compose up
-  ├─ db     postgres:17-alpine  ──┐ healthcheck: pg_isready
-  ├─ redis  redis:8-alpine      ──┤ healthcheck: redis-cli ping
-  │                               ▼ обидва healthy (depends_on: condition: service_healthy)
-  └─ web    Dockerfile → docker-entrypoint.sh → migrate → collectstatic → exec gunicorn
-                                    healthcheck: GET /health/
+  ├─ db          postgres:17-alpine  ──┐ healthcheck: pg_isready
+  ├─ redis       redis:8-alpine      ──┤ healthcheck: redis-cli ping
+  │                                    ▼ обидва healthy (depends_on: condition: service_healthy)
+  ├─ web         Dockerfile → docker-entrypoint.sh → migrate → collectstatic → exec gunicorn
+  │                                    healthcheck: GET /health/
+  │                                    ▼ healthy
+  └─ stripe-cli  stripe listen --forward-to web:8000/payments/webhook/stripe/
 ```
 
 | Сервіс | Порт на Mac | Volume | Healthcheck |
 |---|---|---|---|
-| `db` | 5432 | `postgres_data` → `/var/lib/postgresql/data` | `pg_isready` |
+| `db` | 5432 | `hillel_bookstore_postgres_data` (спільний) → `/var/lib/postgresql/data` | `pg_isready` |
 | `redis` | 6379 | немає (кеш можна втратити, сесії є і в PostgreSQL) | `redis-cli ping` |
-| `web` | 8000 | `static_data` → `/app/staticfiles`, `media_data` → `/app/media` | `GET /health/` (Python `urllib`, у slim-образі немає curl) |
+| `web` | 8000 | `static_data` → `/app/staticfiles`, `hillel_bookstore_media_data` (спільний) → `/app/media` | `GET /health/` (Python `urllib`, у slim-образі немає curl) |
+| `stripe-cli` | немає | немає | немає: від нього ніхто не залежить, стан видно в `logs` |
 
 Корисні команди:
 
@@ -459,7 +750,8 @@ docker compose logs -f web                         # вивід Django / gunicor
 docker compose exec web python manage.py shell     # команда в запущеному контейнері
 docker compose restart web                         # перезапуск (entrypoint знову зробить migrate)
 docker compose down                                # зупинити й видалити контейнери, volumes лишаються
-docker compose down -v                             # ... і ВИДАЛИТИ volumes: базу й обкладинки!
+docker compose down -v                             # ... і видалити static_data (спільні база й обкладинки лишаються)
+docker compose exec web python manage.py cancel_unpaid_orders --dry-run
 ```
 
 **Що варто знати:**
@@ -480,6 +772,38 @@ docker compose down -v                             # ... і ВИДАЛИТИ vol
   лапки: `DJANGO_SECRET_KEY='...'`. Подвійні лапки не допомагають.
 - gunicorn запускається з `--no-control-socket`: з версії 25.1 він відкриває сокет
   для `gunicornc` у `$HOME`, а в користувача `app` немає домашньої папки.
+
+### Спільні volume
+
+База й обкладинки лежать у volume з фіксованими іменами, однакових для всіх наступних ДЗ:
+
+```yaml
+volumes:
+  postgres_data:
+    name: hillel_bookstore_postgres_data
+    external: true
+  media_data:
+    name: hillel_bookstore_media_data
+    external: true
+```
+
+- `name:` — ім'я volume як є. Без нього compose додає префікс проєкту (назву папки),
+  і кожна нова папка ДЗ отримувала б нові порожні volume.
+- `external: true` — compose не створює й не видаляє ці volume: `down -v` спільну
+  базу не зітре. Якщо volume немає, `up` зупиниться з `external volume not found`;
+  тоді `docker volume create ...` (команда в «У Docker»).
+- `static_data` лишається окремим для проєкту: `collectstatic` заповнює його при кожному старті.
+- Одночасно запустити два ДЗ не вийде: обидва займають порти 5432, 6379 і 8000.
+- `.env` однаковий в усіх ДЗ: пароль PostgreSQL записаний у самій базі при першому старті.
+
+Перенесення з volume ДЗ №18 (один раз, контейнери hw_18 зупинені):
+
+```bash
+docker run --rm -v hillel_hw_18_django_postgres_docker_postgres_data:/from -v hillel_bookstore_postgres_data:/to alpine cp -a /from/. /to/
+docker run --rm -v hillel_hw_18_django_postgres_docker_media_data:/from -v hillel_bookstore_media_data:/to alpine cp -a /from/. /to/
+```
+
+`cp -a` зберігає власників файлів (`postgres` для бази, `app` для обкладинок).
 
 ### Локально (runserver + PostgreSQL і Redis з Docker)
 
@@ -546,6 +870,11 @@ docker compose exec -u root web chown -R app:app /app/media
 | `POSTGRES_HOST` | `localhost` для runserver; у Docker compose ставить `db` | `localhost` |
 | `POSTGRES_PORT` | порт | `5432` |
 | `REDIS_URL` | Redis для кешу й сесій; у Docker compose ставить `redis://redis:6379/0` | `redis://localhost:6379/0` |
+| `EMAIL_HOST_USER` | адреса Gmail; порожня → листи в консоль | `name@gmail.com` |
+| `EMAIL_HOST_PASSWORD` | App Password Google (16 літер), не пароль акаунта | |
+| `SITE_URL` | адреса сайту для посилань у листах | `http://localhost:8000` |
+| `STRIPE_SECRET_KEY` | секретний ключ Stripe, тестовий режим | `sk_test_...` |
+| `STRIPE_WEBHOOK_SECRET` | підпис webhook; друкує `stripe-cli listen --print-secret` | `whsec_...` |
 
 `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` читають і Django, і образ
 `postgres`, тому один `.env` обслуговує обидва. Змінювати їх після першого старту
@@ -585,6 +914,23 @@ docker compose exec -u root web chown -R app:app /app/media
 ```bash
 python manage.py seed_books
 ```
+
+### `cancel_unpaid_orders`
+
+Скасовує старі замовлення `new` + `unpaid` і повертає їхні книги на склад
+(через `cancel_order()`; відкрита сторінка Stripe теж закривається).
+
+```bash
+python manage.py cancel_unpaid_orders                    # старші за 24 години
+python manage.py cancel_unpaid_orders --older-than 12h   # 30m, 12h, 2d
+python manage.py cancel_unpaid_orders --dry-run          # лише показати
+```
+
+- `cancel_order(only_unpaid=True)` перевіряє «ще не оплачено» вже під блокуванням:
+  якщо оплата прийшла між вибіркою й скасуванням, замовлення пропускається («skipped»).
+- Мінімум `--older-than 30m`: сторінка Stripe живе 31 хвилину, молодше замовлення
+  може саме зараз оплачуватися.
+- Поки запускається вручну; за розкладом (Celery beat) — у наступних ДЗ.
 
 ### `book_stats`
 
@@ -645,9 +991,9 @@ ORDER BY:  андрій, Андрій, Борис, Гліб, Ґанна, Євг�
 
 - Діє на всю базу: моделі й `order_by` не змінювались.
 - `initdb` виконується лише на порожньому volume. Щоб застосувати до існуючої
-  бази: `docker compose down`, `docker volume rm <проєкт>_postgres_data`,
-  `docker compose up -d` і знову `loaddata` (volume `media_data` не чіпаємо,
-  тому **не** `down -v`).
+  бази: `docker compose down`, `docker volume rm hillel_bookstore_postgres_data`,
+  `docker volume create hillel_bookstore_postgres_data`, `docker compose up -d` і знову
+  `loaddata` (volume обкладинок не чіпаємо).
 - Перевірка: `SELECT datlocprovider FROM pg_database WHERE datname = current_database()`
   повертає `i` (ICU).
 
@@ -667,10 +1013,17 @@ ORDER BY:  андрій, Андрій, Борис, Гліб, Ґанна, Євг�
 - **Вихід у лозі middleware показується як `user=anonymous`**: `logout()`
   змінює `request.user` раніше, ніж middleware його читає. Хто вийшов, видно в
   рядку `Logout: user=...` від сигналу.
-- **Немає скидання пароля й підтвердження email.** Для цього потрібна
-  відправка листів (`PasswordResetView`); заплановано.
-- **Валюта одна.** Ціни показуються з `₴`; підтримку кількох валют
-  (UAH, USD) заплановано на наступні домашки.
+- **Немає скидання пароля й підтвердження email.** Відправка листів уже є,
+  лишилось підключити `PasswordResetView`; заплановано.
+- **Валюта одна.** Ціни й оплата лише в гривнях (`uah`); кілька валют заплановано
+  на наступні домашки.
+- **Stripe лише в тестовому режимі.** Акаунт не активовано (Україна не підтримується).
+- **Повернення коштів вручну.** Якщо скасовано оплачене замовлення, адмінка лише
+  попереджає «return the money to the customer»; refund через Stripe API немає.
+- **Листи й скасування неоплачених — синхронно й вручну.** Лист відправляється в
+  межах запиту; `cancel_unpaid_orders` запускається руками. Обидва — задачі для Celery.
+- **Немає тестів.** Перевірки робились тестовим клієнтом на тимчасовій базі, у
+  репозиторії тестів поки немає.
 
 ## Плани
 
@@ -678,4 +1031,5 @@ ORDER BY:  андрій, Андрій, Борис, Гліб, Ґанна, Євг�
 - i18n: українська та англійська мови інтерфейсу;
 - валюти: модель `Currency` (UAH, USD);
 - скидання пароля й підтвердження email;
-- тести для views, форм, фільтрів і прав доступу.
+- Celery: листи у фоні, `cancel_unpaid_orders` за розкладом (beat);
+- тести для кошика, оформлення (зокрема гонок), webhook, views, форм і прав доступу.

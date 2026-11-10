@@ -14,6 +14,7 @@ from decimal import Decimal
 
 import stripe
 from django.conf import settings
+from django.http import HttpResponse
 from django.urls import reverse
 
 from .base import PaymentProvider, PaymentProviderError, ProviderSession
@@ -137,3 +138,75 @@ class StripeProvider(PaymentProvider):
             logger.exception("Stripe: can't expire session %s", payment.external_id)
             raise PaymentProviderError("Can't close the payment page now.") from error
         return True
+
+    # ------------------------------------------------------------------
+    # Webhook: Stripe -> POST /payments/webhook/stripe/
+    # ------------------------------------------------------------------
+
+    def handle_webhook(self, request):
+        """Verify the signature, then update the payment of the session.
+
+        Events (Stripe CLI: --events, Dashboard: the endpoint's event list):
+        - checkout.session.completed: the customer finished the page;
+          payment_status "paid" for cards -> succeeded. "unpaid" for
+          delayed methods (bank debits): wait for the async_* event;
+        - checkout.session.async_payment_succeeded / _failed: the result
+          of a delayed method;
+        - checkout.session.expired: the page closed without payment.
+
+        Answers:
+        - 400: no / wrong signature or broken JSON: not from Stripe, or the
+          secret is wrong. Stripe retries, the error is in the log;
+        - 200: processed or deliberately ignored (another event type, a
+          session that isn't ours). A non-2xx answer makes Stripe retry for
+          days, so only real failures may return it.
+        """
+        from payments.models import Payment
+        from payments.services import mark_payment_succeeded, mark_payment_unsuccessful
+
+        if not settings.STRIPE_WEBHOOK_SECRET:
+            logger.error("Stripe webhook: STRIPE_WEBHOOK_SECRET is not set")
+            return HttpResponse(status=400)
+        try:
+            # Checks the "Stripe-Signature" header: HMAC-SHA256 of the raw
+            # body with our webhook secret, and a timestamp not older than
+            # 5 minutes (a recorded request can't be replayed later).
+            # request.body: the raw bytes; parsed JSON would not match the
+            # signature.
+            event = stripe.Webhook.construct_event(
+                request.body,
+                request.headers.get("Stripe-Signature"),
+                settings.STRIPE_WEBHOOK_SECRET,
+            )
+        except (ValueError, stripe.SignatureVerificationError):
+            logger.warning("Stripe webhook: invalid payload or signature")
+            return HttpResponse(status=400)
+
+        session = event.data.object
+        handled = {
+            "checkout.session.completed",
+            "checkout.session.async_payment_succeeded",
+            "checkout.session.async_payment_failed",
+            "checkout.session.expired",
+        }
+        if event.type not in handled:
+            return HttpResponse(status=200)
+
+        payment = Payment.objects.filter(provider=self.name, external_id=session.id).first()
+        if payment is None:
+            # A session created by another site on the same Stripe account,
+            # or by a database that was recreated since
+            logger.warning("Stripe webhook %s: unknown session %s", event.type, session.id)
+            return HttpResponse(status=200)
+
+        details = {"last_event": event.id, "last_event_type": event.type}
+        logger.info("Stripe webhook %s for payment %s (%s)", event.type, payment.pk, session.id)
+
+        if event.type == "checkout.session.expired":
+            mark_payment_unsuccessful(payment.pk, Payment.Status.EXPIRED, details=details)
+        elif event.type == "checkout.session.async_payment_failed":
+            mark_payment_unsuccessful(payment.pk, Payment.Status.FAILED, details=details)
+        elif session.payment_status == "paid":
+            # completed (cards) or async_payment_succeeded
+            mark_payment_succeeded(payment.pk, details=details)
+        return HttpResponse(status=200)

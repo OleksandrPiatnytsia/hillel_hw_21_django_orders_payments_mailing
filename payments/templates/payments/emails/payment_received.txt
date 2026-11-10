@@ -1,0 +1,14 @@
+{% autoescape off %}{# Plain text: no HTML escaping #}
+Hello{% if order.full_name %}, {{ order.full_name }}{% endif %}!
+
+We received your payment of {{ payment.amount }} UAH for {{ order }}.
+
+Order total: {{ order.total }} UAH
+Paid: {{ order.paid_amount }} UAH ({{ order.paid_percent }}%)
+{% if order.payment_status == "paid" %}The order is fully paid. We'll let you know when it's shipped.{% else %}Still due: {{ order.amount_due }} UAH.{% endif %}
+
+Order page: {{ order_url }}
+
+Bookstore
+{{ site_url }}
+{% endautoescape %}

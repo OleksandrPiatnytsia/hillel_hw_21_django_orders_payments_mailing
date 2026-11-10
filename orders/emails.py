@@ -16,8 +16,11 @@ from .models import Order
 logger = logging.getLogger(__name__)  # "orders.emails"
 
 
-def _send(order, template_prefix):
+def send_order_email(order, template_prefix, extra_context=None):
     """Render <prefix>_subject.txt / .txt / .html and send them to the customer.
+
+    Used for every email about an order: "order created" here, "payment
+    received" in payments/emails.py. extra_context: more template variables.
 
     Never raises: an email is a notification, the order is already saved.
     A Gmail outage, a wrong App Password or a timeout must not turn a
@@ -30,6 +33,7 @@ def _send(order, template_prefix):
         # Absolute link: the email is read outside the site
         "order_url": f"{settings.SITE_URL}{order.get_absolute_url()}",
         "site_url": settings.SITE_URL,
+        **(extra_context or {}),
     }
     try:
         # The subject must be one line: a template file ends with "\n"
@@ -68,4 +72,4 @@ def send_order_created_email(order_id):
         .prefetch_related("items")
         .get(pk=order_id)
     )
-    return _send(order, "orders/emails/order_created")
+    return send_order_email(order, "orders/emails/order_created")

@@ -1,0 +1,2 @@
+{# One line: send_order_email strips the newline at the end of the file #}
+{% autoescape off %}Bookstore: payment for {{ order }} received ({{ payment.amount }} UAH){% endautoescape %}

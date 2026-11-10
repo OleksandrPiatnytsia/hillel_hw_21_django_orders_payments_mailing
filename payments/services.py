@@ -12,6 +12,7 @@ Every function here:
 
 import logging
 from datetime import timedelta
+from functools import partial
 from decimal import Decimal
 
 from django.db import transaction
@@ -19,6 +20,7 @@ from django.utils import timezone
 
 from orders.models import Order
 
+from .emails import send_payment_received_email
 from .models import Payment
 from .providers.base import PaymentProviderError
 from .providers.registry import ONLINE_PROVIDER, get_provider
@@ -66,6 +68,9 @@ def record_manual_payment(order_id, amount, *, note="", recorded_by=None):
             },
         )
         order.refresh_payment_status()
+        if order.payment_status == Order.PaymentStatus.PAID:
+            # One email when the order is fully paid, not one per part
+            transaction.on_commit(partial(send_payment_received_email, payment.pk))
 
     logger.info("Manual payment %s UAH for %s recorded (%s)", amount, order, order.payment_status)
     return payment
@@ -102,6 +107,10 @@ def mark_payment_succeeded(payment_id, *, details=None):
             payment.details = {**payment.details, **details}
         payment.save(update_fields=["status", "paid_at", "details", "updated_at"])
         order.refresh_payment_status()
+        # After COMMIT, like "order created". Only here, after the
+        # "already succeeded" check above: the webhook and the return page
+        # both confirm the same payment, the customer gets one email.
+        transaction.on_commit(partial(send_payment_received_email, payment.pk))
 
         if order.status == Order.Status.CANCELLED:
             # Paid after the order was cancelled (e.g. cancel_unpaid_orders

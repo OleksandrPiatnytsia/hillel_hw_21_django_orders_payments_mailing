@@ -1,8 +1,10 @@
-# Local Docker setup: Django (web) + PostgreSQL (db) + Redis (redis).
+# Local Docker setup: Django (web) + PostgreSQL (db) + Redis (redis)
+# + Stripe CLI (stripe-cli), which forwards Stripe webhooks to web.
 #
 #   docker compose up --build -d   build the web image and start everything
 #   docker compose ps              state and health of the services
 #   docker compose logs -f web     follow the Django / gunicorn output
+#   docker compose logs -f stripe-cli   events from Stripe and web's answers
 #   docker compose down            stop and remove the containers (volumes stay)
 #   docker compose down -v         ... and delete static_data (the shared
 #                                  database and covers stay: external)
@@ -88,6 +90,9 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
+      # + "web": the stripe-cli service sends webhooks to http://web:8000/...,
+      # so the Host header is "web"; any host not in ALLOWED_HOSTS gets 400
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS},web
     ports:
       # http://localhost:8000 on the Mac -> gunicorn in the container
       - "8000:8000"
@@ -121,6 +126,30 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  stripe-cli:
+    # Stripe can't reach http://localhost:8000 on your Mac from the internet.
+    # The CLI keeps a connection to Stripe open (outgoing, no public URL
+    # needed), receives the events of the account and repeats each one as
+    # POST to the web service, with a valid "Stripe-Signature" header.
+    # Only for development: in production Stripe calls a public HTTPS
+    # endpoint registered in Dashboard -> Developers -> Webhooks.
+    # A fixed version, like the other images.
+    image: stripe/stripe-cli:v1.55.9
+    environment:
+      # The CLI logs in with the secret key from .env (test mode)
+      STRIPE_API_KEY: ${STRIPE_SECRET_KEY}
+    command:
+      - listen
+      # Inside the Docker network the site is "web", not localhost
+      - --forward-to
+      - web:8000/payments/webhook/stripe/
+      # Only the events the site handles (StripeProvider.handle_webhook)
+      - --events
+      - checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired
+    depends_on:
+      web:
         condition: service_healthy
 
 # Named volumes: Docker keeps them in its own storage.

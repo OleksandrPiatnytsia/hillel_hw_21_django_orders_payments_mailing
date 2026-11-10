@@ -2,7 +2,7 @@ from django.urls import path
 
 from . import views
 
-# Namespace: "payments:pay", "payments:success", "payments:cancelled"
+# Namespace: "payments:pay", "payments:success", "payments:cancelled", "payments:webhook"
 app_name = "payments"
 
 urlpatterns = [
@@ -10,4 +10,6 @@ urlpatterns = [
     # Return addresses for Stripe Checkout (success_url / cancel_url)
     path("success/", views.payment_success, name="success"),
     path("cancelled/<int:payment_id>/", views.payment_cancelled, name="cancelled"),
+    # Notifications from the provider: /payments/webhook/stripe/
+    path("webhook/<str:provider_name>/", views.webhook, name="webhook"),
 ]

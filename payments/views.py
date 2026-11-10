@@ -1,11 +1,15 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from orders.models import Order
 
 from .models import Payment
+from .providers.base import PaymentProviderError
+from .providers.registry import get_provider
 from .services import PaymentError, start_online_payment, sync_payment
 
 
@@ -53,3 +57,18 @@ def payment_cancelled(request, payment_id):
         "The payment was not completed. You can pay later with the “Pay” button.",
     )
     return redirect("orders:detail", pk=payment.order_id)
+
+
+# csrf_exempt: the request comes from Stripe, not from our form, so it has
+# no CSRF token. Its authenticity is checked by the provider instead
+# (Stripe: the signature header). No login: Stripe is not a user.
+@csrf_exempt
+@require_POST
+def webhook(request, provider_name):
+    """POST /payments/webhook/<provider>/ -> provider.handle_webhook()."""
+    try:
+        provider = get_provider(provider_name)
+        return provider.handle_webhook(request)
+    except PaymentProviderError:
+        # Unknown provider, or one without webhooks (manual)
+        raise Http404 from None

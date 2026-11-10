@@ -306,6 +306,10 @@ DEFAULT_FROM_EMAIL = f"Bookstore <{EMAIL_USER or 'noreply@localhost'}>"
 # sk_test_: no real money, test cards like 4242 4242 4242 4242.
 # Empty -> the "Pay" button answers "Online payment is not configured".
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+# Signing secret of the webhook (whsec_...): proves that a request to
+# /payments/webhook/stripe/ comes from Stripe. Stripe CLI prints it:
+#   docker compose run --rm stripe-cli listen --print-secret
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
 # Address of the site for links in emails. An email is sent without a
 # request (after COMMIT, from the Stripe webhook), so request.build_absolute_uri()

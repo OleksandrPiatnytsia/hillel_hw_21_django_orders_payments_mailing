@@ -1,0 +1,55 @@
+{% comment %}
+HTML part of the "payment received" email. Inline styles and a table
+layout, like orders/emails/order_created.html (mail clients drop <style>).
+{% endcomment %}
+<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0; padding:24px; background:#f5f5f5; font-family:Arial, sans-serif; color:#212529;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:8px;">
+    <tr>
+      <td style="padding:24px;">
+        <h1 style="font-size:20px; margin:0 0 16px;">📚 Bookstore</h1>
+        <p style="margin:0 0 8px;">Hello{% if order.full_name %}, {{ order.full_name }}{% endif %}!</p>
+        <p style="margin:0 0 16px;">
+          We received your payment of <strong>{{ payment.amount }} ₴</strong> for <strong>{{ order }}</strong>.
+        </p>
+
+        <table role="presentation" width="100%" cellpadding="8" cellspacing="0"
+               style="border-collapse:collapse; font-size:14px; margin-bottom:16px;">
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td>Order total</td>
+            <td align="right" style="white-space:nowrap;">{{ order.total }} ₴</td>
+          </tr>
+          <tr style="border-bottom:1px solid #dee2e6;">
+            <td>Paid</td>
+            <td align="right" style="white-space:nowrap;">{{ order.paid_amount }} ₴ ({{ order.paid_percent }}%)</td>
+          </tr>
+          {% if order.payment_status != "paid" %}
+            <tr>
+              <td><strong>Still due</strong></td>
+              <td align="right" style="white-space:nowrap;"><strong>{{ order.amount_due }} ₴</strong></td>
+            </tr>
+          {% endif %}
+        </table>
+
+        <p style="margin:0 0 24px;">
+          {% if order.payment_status == "paid" %}
+            The order is <strong>fully paid</strong>. We'll let you know when it's shipped.
+          {% else %}
+            The order is <strong>{{ order.get_payment_status_display|lower }}</strong>.
+          {% endif %}
+        </p>
+
+        <a href="{{ order_url }}"
+           style="display:inline-block; padding:10px 20px; background:#0d6efd; color:#ffffff; text-decoration:none; border-radius:6px;">
+          Open the order
+        </a>
+      </td>
+    </tr>
+  </table>
+  <p style="text-align:center; font-size:12px; color:#6c757d;">
+    Bookstore · <a href="{{ site_url }}" style="color:#6c757d;">{{ site_url }}</a>
+  </p>
+</body>
+</html>

@@ -8,10 +8,11 @@ from django.contrib.auth.models import Group
 from django.contrib.auth.views import LoginView, LogoutView
 from django.contrib.messages.views import SuccessMessageMixin
 from django.shortcuts import redirect, resolve_url
+from django.urls import reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.generic import CreateView, TemplateView
+from django.views.generic import CreateView, TemplateView, UpdateView
 
-from .forms import LoginForm, SignUpForm
+from .forms import LoginForm, ProfileForm, SignUpForm
 
 logger = logging.getLogger(__name__)  # "users.views"
 
@@ -114,3 +115,19 @@ class ProfileView(LoginRequiredMixin, TemplateView):
         # as "app_label.codename" strings. A superuser gets every permission.
         context["permissions"] = sorted(user.get_all_permissions())
         return context
+
+
+class ProfileEditView(LoginRequiredMixin, SuccessMessageMixin, UpdateView):
+    """Edit name, phone and delivery address (prefilled at checkout).
+
+    get_object(): always the current user — there is no <pk> in the URL,
+    so nobody can open someone else's profile by changing a number.
+    """
+
+    form_class = ProfileForm
+    template_name = "users/profile_edit.html"
+    success_url = reverse_lazy("users:profile")
+    success_message = "Your profile is saved."
+
+    def get_object(self, queryset=None):
+        return self.request.user

@@ -39,6 +39,25 @@
 
         <hr>
 
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h2 class="h6 mb-0">Delivery details</h2>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'users:profile_edit' %}">Edit</a>
+        </div>
+        {# Prefilled at checkout #}
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Name</dt>
+          <dd class="col-sm-8">{{ user.get_full_name|default:"—" }}</dd>
+
+          <dt class="col-sm-4">Phone</dt>
+          <dd class="col-sm-8">{{ user.phone|default:"—" }}</dd>
+
+          <dt class="col-sm-4">Address</dt>
+          {# linebreaksbr: line breaks of the textarea -> <br> #}
+          <dd class="col-sm-8">{{ user.address|linebreaksbr|default:"—" }}</dd>
+        </dl>
+
+        <hr>
+
         <h2 class="h6">What you can do in the catalog</h2>
         {# perms.<app>.<codename>: the same check as user.has_perm("books.add_book") #}
         <ul class="list-unstyled mb-3">

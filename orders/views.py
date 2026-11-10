@@ -8,7 +8,6 @@ from django.views.generic import ListView
 
 from books.views import ElidedPaginationMixin
 from cart.cart import Cart
-from payments.services import PaymentError, start_online_payment
 
 from .forms import CheckoutForm
 from .models import Order
@@ -19,10 +18,10 @@ from .services import OrderError, cancel_order, create_order
 def checkout(request):
     """Delivery form + cart summary; POST creates the order.
 
-    GET  -> the form, name prefilled from the profile.
+    GET  -> the form, prefilled from the profile.
     POST -> valid form -> create_order() (one transaction) -> clear the cart
-            -> the order page. A stock problem -> back to the cart with
-            the messages, nothing is saved.
+            -> the order page with the "Pay" button. A stock problem -> back
+            to the cart with the messages, nothing is saved.
     """
     cart = Cart(request)
     if not cart:
@@ -33,10 +32,13 @@ def checkout(request):
         form = CheckoutForm(request.POST)
         if form.is_valid():
             try:
+                data = form.cleaned_data
                 order = create_order(
                     request.user,
                     cart.quantities(),
-                    **form.cleaned_data,  # full_name, phone, address
+                    full_name=data["full_name"],
+                    phone=data["phone"],
+                    address=data["address"],
                 )
             except OrderError as error:
                 for text in error.messages:
@@ -47,20 +49,32 @@ def checkout(request):
             # Only after a successful COMMIT: if create_order() failed,
             # the cart stays for the next attempt
             cart.clear()
+            if data["save_to_profile"]:
+                # The next checkout is prefilled with these. The name is not
+                # saved: "full name" can't be split into first / last name
+                # reliably; it's edited on the profile page.
+                request.user.phone = data["phone"]
+                request.user.address = data["address"]
+                request.user.save(update_fields=["phone", "address"])
             messages.success(
                 request,
-                f"{order} is created. The books are reserved for you.",
+                f"{order} is created, the books are reserved for you. "
+                "Pay for it with the “Pay” button.",
             )
-            # Straight to the payment page. If the provider is not available,
-            # the order is still created: the order page with the error and
-            # the "Pay" button for a later attempt.
-            try:
-                return redirect(start_online_payment(order.pk, request.user, request))
-            except PaymentError as error:
-                messages.error(request, str(error))
-                return redirect(order)  # Order.get_absolute_url()
+            # To the order page, not straight to Stripe: the customer sees the
+            # created order first and pays with the "Pay" button
+            # (payments.views.pay) — now or later from "My orders".
+            return redirect(order)  # Order.get_absolute_url()
     else:
-        form = CheckoutForm(initial={"full_name": request.user.get_full_name()})
+        # Prefilled from the profile (users.User): first + last name, phone,
+        # address. Empty for a new user; the checkbox then saves them.
+        form = CheckoutForm(
+            initial={
+                "full_name": request.user.get_full_name(),
+                "phone": request.user.phone,
+                "address": request.user.address,
+            }
+        )
 
     return render(request, "orders/checkout.html", {"form": form})
 

@@ -25,6 +25,13 @@ class User(AbstractUser):
         error_messages={"unique": "A user with this email already exists."},
     )
 
+    # Delivery details for the checkout form: filled in on the profile page
+    # (or saved from the checkout), copied into every new order as its
+    # prefilled values. Optional: a new user has none yet.
+    # The name comes from first_name / last_name (AbstractUser).
+    phone = models.CharField("phone", max_length=30, blank=True)
+    address = models.TextField("delivery address", blank=True)
+
     # Extra fields that `createsuperuser` asks for (besides USERNAME_FIELD
     # and password). AbstractUser already has ["email"]; kept explicit.
     REQUIRED_FIELDS = ["email"]

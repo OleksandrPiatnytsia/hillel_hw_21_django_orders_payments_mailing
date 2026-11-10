@@ -21,17 +21,31 @@
         <h2 class="h5 mb-3">Delivery</h2>
         <form method="post" novalidate>
           {% csrf_token %}
+          {# The three text fields; the checkbox is rendered below (other markup) #}
           {% for field in form %}
-            <div class="mb-3">
-              <label class="form-label" for="{{ field.id_for_label }}">
-                {{ field.label }} <span class="text-danger">*</span>
-              </label>
-              {{ field }}
-              {% for error in field.errors %}
-                <div class="invalid-feedback d-block">{{ error }}</div>
-              {% endfor %}
-            </div>
+            {% if field.name != "save_to_profile" %}
+              <div class="mb-3">
+                <label class="form-label" for="{{ field.id_for_label }}">
+                  {{ field.label }} <span class="text-danger">*</span>
+                </label>
+                {{ field }}
+                {% for error in field.errors %}
+                  <div class="invalid-feedback d-block">{{ error }}</div>
+                {% endfor %}
+              </div>
+            {% endif %}
           {% endfor %}
+
+          <div class="form-check mb-3">
+            {{ form.save_to_profile }}
+            <label class="form-check-label" for="{{ form.save_to_profile.id_for_label }}">
+              {{ form.save_to_profile.label }}
+            </label>
+            <div class="form-text">
+              Next time they'll be filled in for you. You can also change them on
+              <a href="{% url 'users:profile_edit' %}">your profile</a>.
+            </div>
+          </div>
 
           <div class="mb-4">
             <span class="form-label d-block">Email</span>
@@ -74,7 +88,7 @@
         </li>
       </ul>
       <div class="card-footer small text-body-secondary">
-        The books are reserved when you place the order. Payment comes next.
+        The books are reserved when you place the order. Then you pay with the “Pay” button on the order page.
       </div>
     </div>
   </div>

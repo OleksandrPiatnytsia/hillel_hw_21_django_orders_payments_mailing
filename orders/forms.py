@@ -1,6 +1,6 @@
-import re
-
 from django import forms
+
+from users.phone import normalize_phone
 
 from .models import Order
 
@@ -13,6 +13,15 @@ class CheckoutForm(forms.ModelForm):
     otherwise a crafted POST could send total=1.
     The email is not asked: it's taken from the user's profile.
     """
+
+    # Not an Order field: after the order is created, the view copies phone
+    # and address to the user's profile for the next checkout
+    save_to_profile = forms.BooleanField(
+        required=False,
+        initial=True,
+        label="Save phone and address to my profile",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
 
     class Meta:
         model = Order
@@ -39,10 +48,4 @@ class CheckoutForm(forms.ModelForm):
 
     def clean_phone(self):
         """Allow "+380 (67) 123-45-67" and similar; store "+380671234567"."""
-        phone = self.cleaned_data["phone"]
-        digits = re.sub(r"\D", "", phone)  # \D = any non-digit
-        if not re.fullmatch(r"\+?[\d\s()\-]+", phone.strip()) or not 10 <= len(digits) <= 15:
-            raise forms.ValidationError(
-                "Enter a phone number: 10–15 digits, e.g. +380 67 123 45 67."
-            )
-        return ("+" if phone.strip().startswith("+") else "") + digits
+        return normalize_phone(self.cleaned_data["phone"])

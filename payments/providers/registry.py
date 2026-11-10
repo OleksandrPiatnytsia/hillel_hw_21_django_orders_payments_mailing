@@ -12,7 +12,7 @@ PROVIDERS = {
     ]
 }
 
-# Used by the "Pay" button and right after checkout
+# Used by the "Pay" button
 ONLINE_PROVIDER = "stripe"
 
 

@@ -13,6 +13,12 @@ class UserAdmin(BaseUserAdmin):
     so without it the form could not be saved.
     """
 
+    # The edit page: the built-in sections + the delivery details
+    fieldsets = (
+        *BaseUserAdmin.fieldsets,
+        ("Delivery details", {"fields": ("phone", "address")}),
+    )
+
     add_fieldsets = (
         (
             None,

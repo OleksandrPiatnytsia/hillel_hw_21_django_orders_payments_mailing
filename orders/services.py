@@ -130,12 +130,15 @@ def create_order(user, quantities, *, full_name, phone, address):
     return order
 
 
-def cancel_order(order_id, *, user=None):
+def cancel_order(order_id, *, user=None, only_unpaid=False):
     """Cancel an order and return its books to the stock.
 
     user=None: a manager (admin) or a command — any not cancelled order.
     user=<User>: the customer — only their own order, only while
     Order.can_be_cancelled_by_customer is True.
+    only_unpaid=True: the cancel_unpaid_orders command — only a "new" order
+    with no payment, checked under the lock: a payment may arrive between
+    the command's SELECT and this call.
 
     Raises OrderError if the order can't be cancelled.
     """
@@ -153,6 +156,11 @@ def cancel_order(order_id, *, user=None):
                 raise OrderError(f"{order} can't be cancelled any more.")
         if order.status == Order.Status.CANCELLED:
             raise OrderError(f"{order} is already cancelled.")
+        if only_unpaid and not (
+            order.status == Order.Status.NEW
+            and order.payment_status == Order.PaymentStatus.UNPAID
+        ):
+            raise OrderError(f"{order} is not a new unpaid order any more.")
 
         # Return the reserved copies. F("stock") + n: the addition happens
         # in SQL (UPDATE ... SET stock = stock + n), on the current value.
